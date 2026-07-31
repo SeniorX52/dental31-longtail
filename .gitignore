@@ -1,0 +1,59 @@
+# ---------------------------------------------------------------------------
+# Data. Never commit imagery or annotations.
+#
+# data_raw/ additionally holds a restricted clinical package that is licensed
+# "collaborator research copy, no public license granted" with pixel-level PHI
+# review still pending. It must not reach any remote under any circumstance.
+# ---------------------------------------------------------------------------
+data_raw/
+data_clean/
+data/
+*.zip
+*.tar
+*.tar.gz
+
+# Split file lists are regenerated deterministically by
+# tools/make_clean_split.py (seed 42), so nothing is lost by ignoring them --
+# and the source filenames embed patient names, which must not be republished.
+splits/
+
+# ---------------------------------------------------------------------------
+# Weights and run artifacts
+# ---------------------------------------------------------------------------
+weights/
+runs/
+preds/
+logs/
+reports/
+*.pt
+*.pth
+*.onnx
+*.engine
+
+# ---------------------------------------------------------------------------
+# Internal: milestone tracking, client-facing protocol drafts, machine-specific
+# launchers. Kept out of the deliverable repo.
+# ---------------------------------------------------------------------------
+_internal/
+
+# ---------------------------------------------------------------------------
+# Credentials -- belt and braces; these live in $HOME, not here.
+# ---------------------------------------------------------------------------
+kaggle.json
+access_token
+.env
+*.key
+*.pem
+
+# ---------------------------------------------------------------------------
+# Python / editor
+# ---------------------------------------------------------------------------
+__pycache__/
+*.py[cod]
+*.egg-info/
+.ipynb_checkpoints/
+.venv/
+venv/
+.vscode/
+.idea/
+.DS_Store
