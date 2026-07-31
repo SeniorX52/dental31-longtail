@@ -95,3 +95,57 @@ This drops exactly 27 head tensors and loads the other 599. Passing
 `transformer` would also match the entire encoder/decoder stack and silently
 discard the pretrained weights. Derived with
 `python tools/inspect_checkpoint.py weights/checkpoint0033_4scale.pth`.
+
+## Patch 5 — yapf removed `FormatCode(..., verify=)`
+
+`util/slconfig.py` calls `FormatCode(text, style_config=yapf_style, verify=True)`
+when dumping the resolved config at startup. yapf >= 0.40 dropped that
+argument (upstream DINO issue #232), so every run aborts before training:
+
+```
+TypeError: FormatCode() got an unexpected keyword argument 'verify'
+```
+
+Fix (original preserved as `util/slconfig.py.orig`):
+
+```diff
+-        text, _ = FormatCode(text, style_config=yapf_style, verify=True)
++        text, _ = FormatCode(text, style_config=yapf_style)
+```
+
+Verified with yapf 0.43.0.
+
+## Patch 6 — torch >= 2.6 defaults `torch.load(weights_only=True)`
+
+The official DINO release stores its training `argparse.Namespace` inside the
+checkpoint, which the new safe-unpickler refuses:
+
+```
+_pickle.UnpicklingError: Weights only load failed.
+WeightsUnpickler error: Unsupported global: GLOBAL argparse.Namespace
+```
+
+All three `torch.load` calls in `main.py` (lines 201 `--frozen_weights`,
+212 `--resume`, 227 `--pretrain_model_path`) now pass `weights_only=False`.
+This is safe here because the checkpoint's identity was verified by hash
+against the official IDEA-Research release before use — see Patch 4.
+Original preserved as `main.py.orig`.
+
+## Confirmation that the re-heading works
+
+With `--finetune_ignore class_embed label_enc`, the load reports exactly the
+27 classification-head tensors as missing and **nothing** unexpected:
+
+```
+_IncompatibleKeys(missing_keys=[
+    'transformer.decoder.class_embed.{0..5}.{weight,bias}',   # 12
+    'transformer.enc_out_class_embed.{weight,bias}',          #  2
+    'label_enc.weight',                                       #  1
+    'class_embed.{0..5}.{weight,bias}'                        # 12
+], unexpected_keys=[])
+```
+
+i.e. the COCO head is re-initialised for the dental classes while all 599
+remaining tensors (backbone, encoder, decoder, bbox heads) load from the
+pretrained checkpoint. Had `transformer` been passed to `--finetune_ignore`,
+the entire encoder/decoder stack would appear in `missing_keys` instead.
