@@ -7,7 +7,10 @@ from `checkpoint0033_4scale.pth` (ResNet-50, 4-scale, 900 queries, COCO).
 
 1. Register the dental dataset in `datasets/coco.py` (paths to the converted
    JSONs from `tools/yolo_polygons_to_coco.py`).
-2. Set `num_classes = 31` in the config. DINO builds `class_embed` from
+2. Set `num_classes = 32` in the config. DINO uses the raw `category_id` as
+   the label (`datasets/coco.py`: `classes = [obj["category_id"] ...]`, no
+   remapping), so with ids 1..31 the head needs 32 outputs; index 0 is unused.
+   This is the same reason COCO-DETR uses 91 for 80 classes. DINO builds `class_embed` from
    `num_classes`; the COCO 91-class embedding in the checkpoint mismatches, so
    load with `--pretrain_model_path checkpoint0033_4scale.pth --finetune_ignore
    label_enc.weight class_embed` (the repo's documented fine-tune path). All

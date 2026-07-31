@@ -1,0 +1,497 @@
+{
+ "totals": {
+  "train": {
+   "images": 9752,
+   "annotations": 95745
+  },
+  "valid": {
+   "images": 2090,
+   "annotations": 20602
+  },
+  "test": {
+   "images": 2090,
+   "annotations": 20536
+  }
+ },
+ "leakage": {
+  "exact_cross_split": [],
+  "near_duplicate_test": [],
+  "within_split_duplicates": {
+   "train": [
+    [
+     "rf.b460217ffbbe7d7b74946b7d60deb8ad.jpg",
+     "rf.d45e416d70b335fa30f651b45a7933f3.jpg"
+    ],
+    [
+     "rf.12cd3a8291ef5b4dec817b51a0e434f5.jpg",
+     "rf.b3116ed12b5ecb68b1a39c31464b9542.jpg"
+    ],
+    [
+     "rf.4ddea56f1f265e1b1824979a64eb7cae.jpg",
+     "rf.655d14d2ba7478263fe462b81a479463.jpg"
+    ],
+    [
+     "rf.37a5edaa6efd19448a47ed4742d810c6.jpg",
+     "rf.92ab320895bb7a40fb510183c40555db.jpg"
+    ],
+    [
+     "rf.63112b3f82cb897f9f5b7281a3360660.jpg",
+     "rf.b7cca45334e2b4712ff959802cea09cd.jpg"
+    ],
+    [
+     "rf.86d9fa2e127ba2f33ececa178c122f8f.jpg",
+     "rf.9d6df199c767ceb5ca61b24e12be9dee.jpg"
+    ],
+    [
+     "rf.4fa5f4250f2f67c5e7d1268e819e1521.jpg",
+     "rf.fa0a1978ad519825d94790ea72d75271.jpg"
+    ],
+    [
+     "rf.0c529deb5973bd22f6552b194d3e94be.jpg",
+     "rf.d1e207e7e950cec40c23575f2f222caa.jpg"
+    ],
+    [
+     "rf.1fa2ed50605cde0ddcf21539ef33407a.jpg",
+     "rf.db7d898289defa894a6cd7838e309782.jpg"
+    ],
+    [
+     "rf.9d2f2a4ba410d19a722b7826fcf84345.jpg",
+     "rf.b52e12cd713b84340d830c8a60995c59.jpg"
+    ],
+    [
+     "rf.71fc828a25772951f79707305ff5e70c.jpg",
+     "rf.d79556c6952d9335c7a7c75e140b9708.jpg"
+    ],
+    [
+     "rf.7e4c0b351fecb0f313258989f0a59a6a.jpg",
+     "rf.be17179403b2a318c94426a044beb3be.jpg"
+    ],
+    [
+     "rf.a4b65837f23f85e88bda24c4cf803d5b.jpg",
+     "rf.bc78680433cf2e47b245583d105c8aa4.jpg"
+    ],
+    [
+     "rf.1c13603af67fa88cf4294ec261462c34.jpg",
+     "rf.85e4eed0f14938fb4f0b8f14284ced4e.jpg"
+    ],
+    [
+     "rf.0887cee7c5a68397d14c2307cd8a784f.jpg",
+     "rf.2a1cf5c0ee9b197fb039c4b3f7b507bf.jpg"
+    ],
+    [
+     "rf.55a59349434338a46cbaa6372872250d.jpg",
+     "rf.fcb96df7688537a554542916e8378f93.jpg"
+    ],
+    [
+     "rf.0b64de768dd52215afece35f68d7eae9.jpg",
+     "rf.8cc83af3b67b4131aab9b44c95f64f7f.jpg"
+    ],
+    [
+     "rf.270fea263389af717c077edfda52b003.jpg",
+     "rf.c1d8afbe3414fdfde0fe6fc03905668c.jpg"
+    ],
+    [
+     "rf.1edc7b26e851da3dc25794c5d5412e2f.jpg",
+     "rf.bdd7c313700f6600f7cd42f65874f445.jpg"
+    ],
+    [
+     "rf.0329a0301c05669a621054f3a65c3db7.jpg",
+     "rf.07eea0fcc82aa69de29d71c07abbd2a8.jpg"
+    ],
+    [
+     "rf.b180f854ad324fc0a1091a7e9068ade2.jpg",
+     "rf.f2997b46008b4e7db9643016cfed4c5c.jpg"
+    ],
+    [
+     "rf.33dae2fd6ef1a7dfa45dd96d3a41d5fc.jpg",
+     "rf.9104d01bae958a6f340eb9502ef2432a.jpg"
+    ],
+    [
+     "rf.57332d1ad9ea491b169f4830ce7d8cf0.jpg",
+     "rf.81bf99f214f31f50c9e0a9737e2e2925.jpg"
+    ],
+    [
+     "rf.1acb5dcb7fe959c0e813af6e39ed2e47.jpg",
+     "rf.3b3be53aa8b1167ca9542ffdb6f62660.jpg"
+    ],
+    [
+     "rf.1e1a994f1b1d5e5c926402e6d3344bf4.jpg",
+     "rf.b744358f97ce6fd8e46869362a925a6c.jpg"
+    ],
+    [
+     "rf.abbdb858ae41c5150c40eb1c7ad9a883.jpg",
+     "rf.ef556aa327b5763e629ee5e57ae86202.jpg"
+    ],
+    [
+     "rf.68ac61f952bafd5d502aa5fa96e2f0a0.jpg",
+     "rf.cbe11ea237738520faf9222467093823.jpg"
+    ],
+    [
+     "rf.4e3ade05916ebca7361bd6074c442972.jpg",
+     "rf.677a655d28ecfbd5bb608db077b17f1b.jpg"
+    ],
+    [
+     "rf.17e1fbc1bd4c93e1c1e351586e9c16ab.jpg",
+     "rf.d30a8d5d0669c88947710d7dc1461c59.jpg"
+    ],
+    [
+     "rf.2b85b10a3a9341506e6673a9773cbec7.jpg",
+     "rf.52abcbb157a600e8adea5590a8ebb0ad.jpg"
+    ],
+    [
+     "rf.16948d4d9d7b652fe2e28ccb2e811647.jpg",
+     "rf.de01c154f3d5ac58fc3d5ad6567121cc.jpg"
+    ],
+    [
+     "rf.16b963d3a750a7f677450f875e491535.jpg",
+     "rf.94da28d89696a4f96063200f98bcabf5.jpg"
+    ],
+    [
+     "rf.7ab1f23168c87453031a802d5fb7dbdf.jpg",
+     "rf.a6664effc4aacf9729a9116a921f66de.jpg"
+    ],
+    [
+     "rf.8479cf7a6c9d64db212cf17df9a1db03.jpg",
+     "rf.98fccff229f56d69302f90c31b5270a8.jpg"
+    ],
+    [
+     "rf.56cc56289699fff557c02492dd95e8c2.jpg",
+     "rf.a712801b1f5a30b93aa45e2f4b4a18e9.jpg"
+    ],
+    [
+     "rf.21f06a81637d6c3243650ebfccc06ff9.jpg",
+     "rf.53124fc3597006bf7b1680d61bc63f9a.jpg"
+    ],
+    [
+     "rf.de0b8b7c422449f62b06cbc255b02e43.jpg",
+     "rf.fb3c746680892bbc03c61ed204e39e6e.jpg"
+    ],
+    [
+     "rf.5402bf83badada7ed693eeef99db987f.jpg",
+     "rf.7b46e8fda08bdeb2c9445e820f21392b.jpg"
+    ],
+    [
+     "rf.4de247fd0478cef44b4c04e14f8e2288.jpg",
+     "rf.b14df4da2467c6e139bd690e8be30a91.jpg"
+    ],
+    [
+     "rf.dbd7b8c378bdc16abf5a1f8efe666d49.jpg",
+     "rf.f0dc73a138057873b678272685072ee0.jpg"
+    ]
+   ],
+   "valid": [
+    [
+     "rf.76ef328281984404a12f77dbfe054bbf.jpg",
+     "rf.c013b6169167951023649ce96b12aab4.jpg"
+    ],
+    [
+     "rf.448fd9a75d6059c86a1374346eb11999.jpg",
+     "rf.4870f9362e70991264186315d264ea6c.jpg"
+    ],
+    [
+     "rf.48605cb6813d7c1179b0166ea5fb1b5c.jpg",
+     "rf.617e6dc89596a8bcd2c1ae4227d54c1c.jpg"
+    ],
+    [
+     "rf.0082d000db1d49055780cf9c3f928f8a.jpg",
+     "rf.5e146fc5fa880d892846c1caf0d91f9b.jpg"
+    ],
+    [
+     "rf.59c8f8dc634c19e28e64405cda4eb06d.jpg",
+     "rf.bae4086120decdac6e5742e433063ce2.jpg"
+    ],
+    [
+     "rf.5ef8e268d4cda58fc664aa99bd5b9672.jpg",
+     "rf.cfc752c1fb65cbc4390ce139f1d28732.jpg"
+    ]
+   ],
+   "test": [
+    [
+     "rf.3ed796ec37fd88511cfbc0a5bea6cc3f.jpg",
+     "rf.a61121ee7e9020775cc819afbe7c84a1.jpg"
+    ],
+    [
+     "rf.58c5915f30f97ef4e801bd197481fbc8.jpg",
+     "rf.cf9e4358dca5105a86ca8a3e3334c148.jpg"
+    ],
+    [
+     "rf.4ff5677902cc628f26e1b1e4c8f9be10.jpg",
+     "rf.613e4fea52b531ab632cee0724ee2900.jpg"
+    ],
+    [
+     "rf.54242cc035bdf60c5b408197f7ecd4f7.jpg",
+     "rf.80329762e89626e36ab49ded5b2c011f.jpg"
+    ],
+    [
+     "rf.6d2957611126ba21401b6fe7a6c91cf1.jpg",
+     "rf.73a5e92091e20ebbcf64e237a8ac9d90.jpg"
+    ],
+    [
+     "rf.7ebdd3291e4233e21fcef697860317ce.jpg",
+     "rf.b1f1f09159e806e368a33d0d654374d1.jpg"
+    ],
+    [
+     "rf.377a36f260b0dd47c78e97d302173a00.jpg",
+     "rf.ced7dc2ca5e5e494954136eeb1560a66.jpg"
+    ],
+    [
+     "rf.4e4ae0b74d48a70870043cb7e0fa19a0.jpg",
+     "rf.e4c4b5cfc11961994a06848b32927209.jpg"
+    ],
+    [
+     "rf.a720fe48784f4a8920548cb605d59425.jpg",
+     "rf.b36775cb2c1324ffcb56ba2deafe367f.jpg"
+    ],
+    [
+     "rf.29e7f5490865db87fed1879e02fb1c3a.jpg",
+     "rf.72742bd0b06074a7eaf70ee4b3a12e76.jpg"
+    ],
+    [
+     "rf.ac71a0070d0bd5bcb31ec025faf49c75.jpg",
+     "rf.cc37f6adee77fb6d9b55f8a8b3c6101d.jpg"
+    ]
+   ]
+  },
+  "dhash_candidates_checked": 441240,
+  "rejected_as_lookalike_by_ncc": 441240
+ },
+ "problems": {
+  "train": {
+   "coords_out_of_unit_range": 4,
+   "zero_area_polygon": 8
+  },
+  "valid": {},
+  "test": {
+   "coords_out_of_unit_range": 2
+  }
+ },
+ "reconciliation": {
+  "train": {
+   "coco_images": 9752,
+   "yolo_images": 9752,
+   "only_in_coco": [],
+   "only_in_yolo": [],
+   "coco_annotations": 95745,
+   "yolo_annotations": 95745,
+   "annotations_with_empty_segmentation": 0,
+   "per_class_count_diff": {},
+   "category_names_match": true
+  },
+  "valid": {
+   "coco_images": 2090,
+   "yolo_images": 2090,
+   "only_in_coco": [],
+   "only_in_yolo": [],
+   "coco_annotations": 20602,
+   "yolo_annotations": 20602,
+   "annotations_with_empty_segmentation": 0,
+   "per_class_count_diff": {},
+   "category_names_match": true
+  },
+  "test": {
+   "coco_images": 2090,
+   "yolo_images": 2090,
+   "only_in_coco": [],
+   "only_in_yolo": [],
+   "coco_annotations": 20536,
+   "yolo_annotations": 20536,
+   "annotations_with_empty_segmentation": 0,
+   "per_class_count_diff": {},
+   "category_names_match": true
+  }
+ },
+ "per_class": {
+  "Caries": {
+   "train": 7505,
+   "valid": 1615,
+   "test": 1604
+  },
+  "Crown": {
+   "train": 7872,
+   "valid": 1693,
+   "test": 1687
+  },
+  "Filling": {
+   "train": 34318,
+   "valid": 7359,
+   "test": 7352
+  },
+  "Implant": {
+   "train": 1251,
+   "valid": 270,
+   "test": 270
+  },
+  "Malaligned": {
+   "train": 10,
+   "valid": 4,
+   "test": 4
+  },
+  "Mandibular Canal": {
+   "train": 433,
+   "valid": 96,
+   "test": 92
+  },
+  "Missing teeth": {
+   "train": 2447,
+   "valid": 529,
+   "test": 527
+  },
+  "Periapical lesion": {
+   "train": 3695,
+   "valid": 799,
+   "test": 797
+  },
+  "Retained root": {
+   "train": 113,
+   "valid": 31,
+   "test": 30
+  },
+  "Root Canal Treatment": {
+   "train": 13386,
+   "valid": 2879,
+   "test": 2866
+  },
+  "Root Piece": {
+   "train": 1824,
+   "valid": 397,
+   "test": 392
+  },
+  "impacted tooth": {
+   "train": 19582,
+   "valid": 4204,
+   "test": 4192
+  },
+  "maxillary sinus": {
+   "train": 324,
+   "valid": 68,
+   "test": 70
+  },
+  "Bone Loss": {
+   "train": 2188,
+   "valid": 473,
+   "test": 469
+  },
+  "Fracture teeth": {
+   "train": 7,
+   "valid": 2,
+   "test": 2
+  },
+  "Permanent Teeth": {
+   "train": 8,
+   "valid": 2,
+   "test": 2
+  },
+  "Supra Eruption": {
+   "train": 32,
+   "valid": 8,
+   "test": 8
+  },
+  "TAD": {
+   "train": 2,
+   "valid": 1,
+   "test": 1
+  },
+  "abutment": {
+   "train": 24,
+   "valid": 5,
+   "test": 4
+  },
+  "attrition": {
+   "train": 29,
+   "valid": 7,
+   "test": 8
+  },
+  "bone defect": {
+   "train": 1,
+   "valid": 0,
+   "test": 0
+  },
+  "gingival former": {
+   "train": 4,
+   "valid": 2,
+   "test": 8
+  },
+  "metal band": {
+   "train": 44,
+   "valid": 11,
+   "test": 10
+  },
+  "orthodontic brackets": {
+   "train": 94,
+   "valid": 21,
+   "test": 21
+  },
+  "permanent retainer": {
+   "train": 4,
+   "valid": 2,
+   "test": 2
+  },
+  "post - core": {
+   "train": 219,
+   "valid": 50,
+   "test": 46
+  },
+  "plating": {
+   "train": 6,
+   "valid": 0,
+   "test": 2
+  },
+  "wire": {
+   "train": 161,
+   "valid": 35,
+   "test": 35
+  },
+  "Cyst": {
+   "train": 3,
+   "valid": 1,
+   "test": 1
+  },
+  "Root resorption": {
+   "train": 2,
+   "valid": 1,
+   "test": 0
+  },
+  "Primary teeth": {
+   "train": 157,
+   "valid": 37,
+   "test": 34
+  }
+ },
+ "grouping": {
+  "Caries": "head",
+  "Crown": "head",
+  "Filling": "head",
+  "Implant": "mid",
+  "Malaligned": "tail",
+  "Mandibular Canal": "mid",
+  "Missing teeth": "mid",
+  "Periapical lesion": "mid",
+  "Retained root": "mid",
+  "Root Canal Treatment": "head",
+  "Root Piece": "mid",
+  "impacted tooth": "head",
+  "maxillary sinus": "mid",
+  "Bone Loss": "mid",
+  "Fracture teeth": "tail",
+  "Permanent Teeth": "tail",
+  "Supra Eruption": "tail",
+  "TAD": "tail",
+  "abutment": "tail",
+  "attrition": "tail",
+  "bone defect": "tail",
+  "gingival former": "tail",
+  "metal band": "tail",
+  "orthodontic brackets": "tail",
+  "permanent retainer": "tail",
+  "post - core": "mid",
+  "plating": "tail",
+  "wire": "mid",
+  "Cyst": "tail",
+  "Root resorption": "tail",
+  "Primary teeth": "mid"
+ },
+ "verdict": {
+  "leakage_free": true,
+  "problem_count": 14
+ }
+}

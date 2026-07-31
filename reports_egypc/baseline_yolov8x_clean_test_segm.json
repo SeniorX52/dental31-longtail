@@ -1,0 +1,339 @@
+{
+ "iou_type": "segm",
+ "coco_stats": {
+  "mAP": 0.10507622771181872,
+  "AP50": 0.25900626227873746,
+  "AP75": 0.0687016481667204,
+  "AP_small": 0.12716115899144795,
+  "AP_medium": 0.136500411111241,
+  "AP_large": 0.0793634514726273,
+  "AR1": 0.07938478380978091,
+  "AR10": 0.19328145292150906,
+  "AR100": 0.20728065463714632,
+  "AR_small": 0.18329745763864153,
+  "AR_medium": 0.2306472255837307,
+  "AR_large": 0.22897190712471768
+ },
+ "group_AP": {
+  "head": 0.28609206775888646,
+  "mid": 0.10378292555159024,
+  "tail": 0.03654908336775524
+ },
+ "per_class": [
+  {
+   "id": 1,
+   "class": "Caries",
+   "group": "head",
+   "train_instances": 7505,
+   "eval_instances": 1604,
+   "AP": 0.08546346270119252,
+   "AP50": 0.2899596773016523,
+   "unstable": false
+  },
+  {
+   "id": 2,
+   "class": "Crown",
+   "group": "head",
+   "train_instances": 7872,
+   "eval_instances": 1687,
+   "AP": 0.4490381938726563,
+   "AP50": 0.8034741394406282,
+   "unstable": false
+  },
+  {
+   "id": 3,
+   "class": "Filling",
+   "group": "head",
+   "train_instances": 34318,
+   "eval_instances": 7352,
+   "AP": 0.2756454300076237,
+   "AP50": 0.6609685386088493,
+   "unstable": false
+  },
+  {
+   "id": 4,
+   "class": "Implant",
+   "group": "mid",
+   "train_instances": 1251,
+   "eval_instances": 270,
+   "AP": 0.35660779981665514,
+   "AP50": 0.8816194025978354,
+   "unstable": false
+  },
+  {
+   "id": 5,
+   "class": "Malaligned",
+   "group": "tail",
+   "train_instances": 10,
+   "eval_instances": 4,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 6,
+   "class": "Mandibular Canal",
+   "group": "mid",
+   "train_instances": 433,
+   "eval_instances": 92,
+   "AP": 0.1115551050097314,
+   "AP50": 0.27283872819337823,
+   "unstable": false
+  },
+  {
+   "id": 7,
+   "class": "Missing teeth",
+   "group": "mid",
+   "train_instances": 2447,
+   "eval_instances": 527,
+   "AP": 0.1528393779936381,
+   "AP50": 0.4347787397284545,
+   "unstable": false
+  },
+  {
+   "id": 8,
+   "class": "Periapical lesion",
+   "group": "mid",
+   "train_instances": 3695,
+   "eval_instances": 797,
+   "AP": 0.021417921771659867,
+   "AP50": 0.08617524272926234,
+   "unstable": false
+  },
+  {
+   "id": 9,
+   "class": "Retained root",
+   "group": "mid",
+   "train_instances": 113,
+   "eval_instances": 30,
+   "AP": 0.0033048101190209516,
+   "AP50": 0.03000164269820647,
+   "unstable": false
+  },
+  {
+   "id": 10,
+   "class": "Root Canal Treatment",
+   "group": "head",
+   "train_instances": 13386,
+   "eval_instances": 2866,
+   "AP": 0.11499718507240463,
+   "AP50": 0.37552620667303754,
+   "unstable": false
+  },
+  {
+   "id": 11,
+   "class": "Root Piece",
+   "group": "mid",
+   "train_instances": 1824,
+   "eval_instances": 392,
+   "AP": 0.14644549601494566,
+   "AP50": 0.44144485004895,
+   "unstable": false
+  },
+  {
+   "id": 12,
+   "class": "impacted tooth",
+   "group": "head",
+   "train_instances": 19582,
+   "eval_instances": 4192,
+   "AP": 0.5053160671405551,
+   "AP50": 0.9337460641873627,
+   "unstable": false
+  },
+  {
+   "id": 13,
+   "class": "maxillary sinus",
+   "group": "mid",
+   "train_instances": 324,
+   "eval_instances": 70,
+   "AP": 0.23036749066720244,
+   "AP50": 0.3573306806046866,
+   "unstable": false
+  },
+  {
+   "id": 14,
+   "class": "Bone Loss",
+   "group": "mid",
+   "train_instances": 2188,
+   "eval_instances": 469,
+   "AP": 0.01357378445573349,
+   "AP50": 0.06552727515721109,
+   "unstable": false
+  },
+  {
+   "id": 15,
+   "class": "Fracture teeth",
+   "group": "tail",
+   "train_instances": 7,
+   "eval_instances": 2,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 16,
+   "class": "Permanent Teeth",
+   "group": "tail",
+   "train_instances": 8,
+   "eval_instances": 2,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 17,
+   "class": "Supra Eruption",
+   "group": "tail",
+   "train_instances": 32,
+   "eval_instances": 8,
+   "AP": 0.1275459356800871,
+   "AP50": 0.22119250154391695,
+   "unstable": true
+  },
+  {
+   "id": 18,
+   "class": "TAD",
+   "group": "tail",
+   "train_instances": 2,
+   "eval_instances": 1,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 19,
+   "class": "abutment",
+   "group": "tail",
+   "train_instances": 24,
+   "eval_instances": 4,
+   "AP": 0.017161716171617162,
+   "AP50": 0.0429042904290429,
+   "unstable": true
+  },
+  {
+   "id": 20,
+   "class": "attrition",
+   "group": "tail",
+   "train_instances": 29,
+   "eval_instances": 8,
+   "AP": 0.00019210876311511748,
+   "AP50": 0.0006403625437170583,
+   "unstable": true
+  },
+  {
+   "id": 21,
+   "class": "bone defect",
+   "group": "tail",
+   "train_instances": 1,
+   "eval_instances": 0,
+   "AP": NaN,
+   "AP50": NaN,
+   "unstable": true
+  },
+  {
+   "id": 22,
+   "class": "gingival former",
+   "group": "tail",
+   "train_instances": 4,
+   "eval_instances": 8,
+   "AP": 0.2586138613861386,
+   "AP50": 0.7524752475247525,
+   "unstable": true
+  },
+  {
+   "id": 23,
+   "class": "metal band",
+   "group": "tail",
+   "train_instances": 44,
+   "eval_instances": 10,
+   "AP": 0.0011254125412541254,
+   "AP50": 0.009075907590759075,
+   "unstable": false
+  },
+  {
+   "id": 24,
+   "class": "orthodontic brackets",
+   "group": "tail",
+   "train_instances": 94,
+   "eval_instances": 21,
+   "AP": 0.07049904923860595,
+   "AP50": 0.3327367726420675,
+   "unstable": false
+  },
+  {
+   "id": 25,
+   "class": "permanent retainer",
+   "group": "tail",
+   "train_instances": 4,
+   "eval_instances": 2,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 26,
+   "class": "post - core",
+   "group": "mid",
+   "train_instances": 219,
+   "eval_instances": 46,
+   "AP": 0.03859497264575356,
+   "AP50": 0.16742212352204813,
+   "unstable": false
+  },
+  {
+   "id": 27,
+   "class": "plating",
+   "group": "tail",
+   "train_instances": 6,
+   "eval_instances": 2,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 28,
+   "class": "wire",
+   "group": "mid",
+   "train_instances": 161,
+   "eval_instances": 35,
+   "AP": 0.026602013489296347,
+   "AP50": 0.16452102789464465,
+   "unstable": false
+  },
+  {
+   "id": 29,
+   "class": "Cyst",
+   "group": "tail",
+   "train_instances": 3,
+   "eval_instances": 1,
+   "AP": 0.0,
+   "AP50": 0.0,
+   "unstable": true
+  },
+  {
+   "id": 30,
+   "class": "Root resorption",
+   "group": "tail",
+   "train_instances": 2,
+   "eval_instances": 0,
+   "AP": NaN,
+   "AP50": NaN,
+   "unstable": true
+  },
+  {
+   "id": 31,
+   "class": "Primary teeth",
+   "group": "mid",
+   "train_instances": 157,
+   "eval_instances": 34,
+   "AP": 0.04030340908385558,
+   "AP50": 0.18682218442292203,
+   "unstable": false
+  }
+ ],
+ "grouping": {
+  "head_min": 5000,
+  "tail_max": 100,
+  "train_json": "data_clean/annotations/instances_train.json"
+ }
+}
