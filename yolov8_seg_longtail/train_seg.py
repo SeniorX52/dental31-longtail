@@ -4,12 +4,14 @@
 Two changes over the stock `yolo segment train` pipeline, each independently
 switchable so the ablation isolates them:
 
-1. Class-balanced classification loss (`--beta`): effective-number-of-samples
-   weights (Cui et al., CVPR 2019) computed from the TRAIN label files and
-   injected via the `model.class_weights` hook that `v8DetectionLoss` already
-   honors (bce_loss *= class_weights). With counts spanning 33,000 -> 4, raw
-   BCE lets head classes drown the tail; beta=0.999-0.9999 rebalances without
-   the variance explosion of inverse-frequency weighting.
+1. Class-balanced classification loss (`--weights`): per-class weights from
+   the TRAIN label files, injected via the `model.class_weights` hook that
+   `v8DetectionLoss` already honors (bce_loss *= class_weights). Choose
+   'invsqrt' or an effective-number beta (Cui et al., CVPR 2019).
+   Default beta is 0.99, NOT the customary 0.999: measured on this dataset
+   (34,320:1 imbalance) the tail weight saturates near 2.0 past 0.99 while the
+   head weight collapses to 0.009 and then 0.001, so a larger beta helps the
+   tail not at all and merely erases the head. See ABLATION_PLAN.md.
 
 2. Boundary-aware mask loss (`--boundary-weight`): adds a soft-boundary Dice
    term to the per-instance mask BCE in `single_mask_loss`. Boundary bands
@@ -23,8 +25,8 @@ class_weights hook, SegmentationTrainer.get_model). Pin: ultralytics>=8.4,<8.5.
 
 Usage:
     python yolov8_seg_longtail/train_seg.py --data data/data.yaml \
-        --model yolov8s-seg.pt --epochs 100 --imgsz 640 --seed 42 \
-        --beta 0.999 --boundary-weight 0.5 --name lt_boundary
+        --model yolov8x-seg.pt --epochs 50 --imgsz 640 --seed 42 \
+        --weights 0.99 --boundary-weight 0.5 --name lt_boundary
 """
 import argparse
 import glob
@@ -59,6 +61,13 @@ def effective_number_weights(counts: torch.Tensor, beta: float = 0.999) -> torch
 
     Classes with zero training instances get the max weight among seen
     classes (they can only appear via later augmentation).
+
+    NOTE on choosing beta: the customary 0.999 comes from CIFAR-LT, whose
+    imbalance is ~100:1. Measured on this dataset (34,320:1), the tail weight
+    saturates near 2.0 beyond beta=0.99 while the head weight keeps collapsing
+    (0.083 -> 0.009 -> 0.001). Raising beta past 0.99 therefore buys the tail
+    nothing and merely deletes the head classes from the loss. See
+    ABLATION_PLAN.md for the measured table.
     """
     seen = counts > 0
     eff = torch.ones_like(counts)
@@ -66,6 +75,28 @@ def effective_number_weights(counts: torch.Tensor, beta: float = 0.999) -> torch
     if seen.any():
         eff[~seen] = eff[seen].max()
     return eff / eff.mean()
+
+
+def inverse_sqrt_weights(counts: torch.Tensor) -> torch.Tensor:
+    """w_c proportional to 1/sqrt(n_c), normalized to mean 1.
+
+    Included as a distinct arm because it is far gentler on the MID-frequency
+    classes than effective-number weighting at comparable tail strength
+    (mid 0.220 vs 0.092 for beta=0.99, with tail ~1.9 in both). Most of the
+    recoverable headroom on this dataset sits in the mid group, so the softer
+    treatment may win outright.
+    """
+    inv = counts.clamp(min=1).pow(-0.5)
+    return inv / inv.mean()
+
+
+def build_class_weights(counts: torch.Tensor, scheme: str) -> Optional[torch.Tensor]:
+    """scheme: 'none' | 'invsqrt' | a float beta for effective-number."""
+    if scheme in ("none", "off", ""):
+        return None
+    if scheme == "invsqrt":
+        return inverse_sqrt_weights(counts)
+    return effective_number_weights(counts, beta=float(scheme))
 
 
 def soft_boundary(x: torch.Tensor, band: int = 3) -> torch.Tensor:
@@ -148,8 +179,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--imgsz", type=int, default=640)
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--seed", type=int, default=42)
-    ap.add_argument("--beta", type=float, default=0.999,
-                    help="effective-number beta; <0 disables class weighting")
+    ap.add_argument("--weights", default="0.99",
+                    help="class-weighting scheme: 'none', 'invsqrt', or a beta "
+                         "value for effective-number weighting (e.g. 0.99). "
+                         "Default 0.99 -- see ABLATION_PLAN.md for why not 0.999")
     ap.add_argument("--boundary-weight", type=float, default=0.5,
                     help="0 disables the boundary Dice term")
     ap.add_argument("--name", default="longtail_seg")
@@ -157,13 +190,15 @@ def main(argv: Optional[List[str]] = None) -> None:
     args = ap.parse_args(argv)
 
     weights = None
-    if args.beta >= 0:
-        labels_dir = args.train_labels or os.path.join(
-            os.path.dirname(os.path.abspath(args.data)), "train", "labels")
-        counts = class_counts_from_yolo_labels(labels_dir, args.nc)
-        weights = effective_number_weights(counts, beta=args.beta)
+    labels_dir = args.train_labels or os.path.join(
+        os.path.dirname(os.path.abspath(args.data)), "train", "labels")
+    counts = class_counts_from_yolo_labels(labels_dir, args.nc)
+    weights = build_class_weights(counts, args.weights)
+    print("class-weighting scheme:", args.weights)
+    if weights is not None:
         print("class counts:", counts.tolist())
         print("class weights:", [round(w, 3) for w in weights.tolist()])
+        print("weight ratio max/min: %.1fx" % float(weights.max() / weights.min()))
 
     overrides = dict(model=args.model, data=args.data, epochs=args.epochs,
                      imgsz=args.imgsz, batch=args.batch, seed=args.seed,
