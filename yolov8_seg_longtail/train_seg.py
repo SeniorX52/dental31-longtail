@@ -187,6 +187,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                     help="0 disables the boundary Dice term")
     ap.add_argument("--name", default="longtail_seg")
     ap.add_argument("--device", default=None)
+    # Accuracy-neutral throughput settings, verified by tools/bench_train_speed.py.
+    # They must be identical across every compared run, so the ablation queue
+    # passes the same set to all arms.
+    ap.add_argument("--cache", default=None,
+                    help="'ram' or 'disk' to decode images once instead of every epoch")
+    ap.add_argument("--channels-last", action="store_true",
+                    help="NHWC memory format (numerically identical, tensor-core friendly)")
+    ap.add_argument("--compile", default=None,
+                    help="torch.compile mode; safe at fixed imgsz")
+    ap.add_argument("--workers", type=int, default=None,
+                    help="dataloader workers (default 8; this box has 24 cores)")
     args = ap.parse_args(argv)
 
     weights = None
@@ -205,6 +216,17 @@ def main(argv: Optional[List[str]] = None) -> None:
                      deterministic=True, name=args.name)
     if args.device is not None:
         overrides["device"] = args.device
+    if args.cache:
+        overrides["cache"] = args.cache
+    if args.channels_last:
+        overrides["channels_last"] = True
+    if args.compile:
+        overrides["compile"] = (True if args.compile in ("1", "true", "True")
+                                else args.compile)
+    if args.workers is not None:
+        overrides["workers"] = args.workers
+    print("throughput overrides:", {k: overrides[k] for k in
+          ("cache", "channels_last", "compile", "workers") if k in overrides})
     trainer = LongTailSegTrainer(overrides=overrides,
                                  class_weights=weights,
                                  boundary_weight=args.boundary_weight)

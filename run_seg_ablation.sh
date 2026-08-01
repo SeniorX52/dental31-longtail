@@ -69,6 +69,7 @@ run_arm() {
     --data "$DATA" --model "$MODEL" \
     --epochs "$EPOCHS" --imgsz "$IMGSZ" --batch "$BATCH" --seed "$SEED" \
     --weights "$wscheme" --boundary-weight "$bw" \
+    ${EXTRA} \
     --name "abl_${name}" 2>&1 | tail -25
 
   local W

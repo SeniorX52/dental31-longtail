@@ -59,6 +59,7 @@ run_arm() {
     --train-labels "$ROOT/data_clean_cp/train/labels" \
     --epochs "$EPOCHS" --imgsz "$IMGSZ" --batch "$BATCH" --seed "$SEED" \
     --weights "$wscheme" --boundary-weight "$bw" \
+    ${EXTRA} \
     --name "abl_${name}" 2>&1 | tail -25
   local W
   W=$(ls -t runs/*/abl_${name}/weights/best.pt runs/abl_${name}/weights/best.pt 2>/dev/null | head -1)
