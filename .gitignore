@@ -57,3 +57,6 @@ venv/
 .vscode/
 .idea/
 .DS_Store
+
+# Plain-language internal overview -- not part of the deliverable repo
+PROJECT_OVERVIEW.md
