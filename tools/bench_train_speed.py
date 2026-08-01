@@ -78,15 +78,17 @@ def run_one(name: str, extra: Dict, args) -> Optional[Dict]:
 
     csv_path = os.path.join(run_dir, "results.csv")
     if not os.path.exists(csv_path):
-        # ultralytics may nest under its own runs_dir
+        # ultralytics nests --project under its OWN runs_dir, so the real path
+        # is e.g. runs/segment/runs/speedbench/<name>. Search the whole runs
+        # tree, newest first, rather than assuming our own project path.
         cands = []
-        for root, _, files in os.walk(args.project):
+        for root, _, files in os.walk("runs"):
             if "results.csv" in files and os.path.basename(root) == name:
                 cands.append(os.path.join(root, "results.csv"))
         if not cands:
-            print("  %s: no results.csv" % name)
+            print("  %s: no results.csv found under runs/" % name)
             return None
-        csv_path = cands[0]
+        csv_path = max(cands, key=os.path.getmtime)
 
     import csv as _csv
     rows = list(_csv.DictReader(open(csv_path)))
