@@ -94,6 +94,22 @@ def main() -> None:
 
     import torch
     from ultralytics import YOLO
+
+    # Checkpoints written by train_seg.py pickle a reference to
+    # __main__.LongTailSegModel / BoundaryAwareSegLoss, because that script was
+    # __main__ when it saved them. Loading from any other entry point cannot
+    # resolve those names, so re-publish them into this process's __main__
+    # before torch.load runs. Without this, every ablation arm's weights are
+    # unloadable outside the trainer.
+    import __main__
+    try:
+        from yolov8_seg_longtail.train_seg import (  # noqa: F401
+            LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer)
+        for _cls in (LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer):
+            setattr(__main__, _cls.__name__, _cls)
+    except Exception as _e:                      # stock checkpoints don't need it
+        print("note: long-tail classes not registered (%s)" % _e)
+
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
 

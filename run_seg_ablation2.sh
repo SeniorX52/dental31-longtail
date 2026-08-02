@@ -14,12 +14,13 @@
 #
 # Launch:
 #   setsid nohup bash run_seg_ablation2.sh > logs/seg_ablation2.log 2>&1 </dev/null &
-set -eo pipefail
+set -o pipefail   # NOT -e: a failed arm must not abort the queue
 
 ROOT="$HOME/Documents/ML_SOTA"
 cd "$ROOT"
 mkdir -p logs reports preds runs
 source "$HOME/miniconda3/bin/activate" dental
+export PYTHONPATH="$ROOT:$PYTHONPATH"
 
 EPOCHS=${EPOCHS:-50}
 BATCH=${BATCH:-8}
@@ -62,7 +63,7 @@ run_arm() {
     ${EXTRA} \
     --name "abl_${name}" 2>&1 | tail -25
   local W
-  W=$(ls -t runs/*/abl_${name}/weights/best.pt runs/abl_${name}/weights/best.pt 2>/dev/null | head -1)
+  W=$(ls -t runs/*/abl_${name}*/weights/best.pt 2>/dev/null | head -1)
   [ -z "$W" ] && { echo "no weights for $name"; return 0; }
   python yolov8_seg_longtail/predict_to_coco.py \
     --weights "$W" --gt "$GT" --images "$IMAGES" \
