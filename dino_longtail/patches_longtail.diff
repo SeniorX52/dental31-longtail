@@ -1,0 +1,1568 @@
+diff --git a/datasets/coco.py b/datasets/coco.py
+index 51f576c..e34d4e9 100644
+--- a/datasets/coco.py
++++ b/datasets/coco.py
+@@ -609,6 +609,25 @@ def get_aux_target_hacks_list(image_set, args):
+     return aux_target_hacks_list
+ 
+ 
++class LtClahe(object):
++    """CLAHE on the L channel of LAB; PIL in / PIL out. Gated by args.lt_clahe."""
++    def __init__(self, clip=2.0, grid=8):
++        import cv2
++        self._clahe = cv2.createCLAHE(clipLimit=clip, tileGridSize=(grid, grid))
++
++    def __call__(self, img, target=None):
++        import numpy as np, cv2
++        from PIL import Image
++        arr = np.asarray(img)
++        if arr.ndim == 2:
++            out = self._clahe.apply(arr)
++        else:
++            lab = cv2.cvtColor(arr, cv2.COLOR_RGB2LAB)
++            lab[..., 0] = self._clahe.apply(lab[..., 0])
++            out = cv2.cvtColor(lab, cv2.COLOR_LAB2RGB)
++        return Image.fromarray(out), target
++
++
+ def build(image_set, args):
+     root = Path(args.coco_path)
+     mode = 'instances'
+@@ -638,6 +657,13 @@ def build(image_set, args):
+             aux_target_hacks=aux_target_hacks_list,
+         )
+ 
++    if getattr(args, 'lt_clahe', False):
++        # long-tail: CLAHE before every other transform, train AND eval, so the
++        # model always sees contrast-equalised radiographs. Low-contrast
++        # lesions (caries, periapical) are the intended beneficiaries.
++        dataset._transforms = T.Compose([LtClahe(), dataset._transforms])
++        print('[longtail] CLAHE enabled for %s' % image_set)
++
+     return dataset
+ 
+ 
+diff --git a/main.py b/main.py
+index 213e75a..58ee879 100644
+--- a/main.py
++++ b/main.py
+@@ -171,7 +171,20 @@ def main(args):
+         sampler_train = DistributedSampler(dataset_train)
+         sampler_val = DistributedSampler(dataset_val, shuffle=False)
+     else:
+-        sampler_train = torch.utils.data.RandomSampler(dataset_train)
++        if getattr(args, 'lt_rfs', False):
++            # long-tail: LVIS-style repeat-factor sampling. Factors come from
++            # the TRAIN json; dataset_train.ids preserves pycocotools order.
++            from dino_longtail.repeat_factor import image_repeat_factors, RepeatFactorSampler
++            _rf = image_repeat_factors(
++                os.path.join(args.coco_path, 'annotations', 'instances_train2017.json'),
++                t=float(getattr(args, 'lt_rfs_t', 0.001)))
++            _factors = [_rf.get(_i, 1.0) for _i in dataset_train.ids]
++            sampler_train = RepeatFactorSampler(_factors, seed=args.seed)
++            print('[longtail] repeat-factor sampling: %d/%d images oversampled (t=%s)'
++                  % (sum(1 for f in _factors if f > 1.0), len(_factors),
++                     getattr(args, 'lt_rfs_t', 0.001)))
++        else:
++            sampler_train = torch.utils.data.RandomSampler(dataset_train)
+         sampler_val = torch.utils.data.SequentialSampler(dataset_val)
+ 
+     batch_sampler_train = torch.utils.data.BatchSampler(
+@@ -198,7 +211,7 @@ def main(args):
+         base_ds = get_coco_api_from_dataset(dataset_val)
+ 
+     if args.frozen_weights is not None:
+-        checkpoint = torch.load(args.frozen_weights, map_location='cpu')
++        checkpoint = torch.load(args.frozen_weights, map_location='cpu', weights_only=False)
+         model_without_ddp.detr.load_state_dict(checkpoint['model'])
+ 
+     output_dir = Path(args.output_dir)
+@@ -209,7 +222,7 @@ def main(args):
+             checkpoint = torch.hub.load_state_dict_from_url(
+                 args.resume, map_location='cpu', check_hash=True)
+         else:
+-            checkpoint = torch.load(args.resume, map_location='cpu')
++            checkpoint = torch.load(args.resume, map_location='cpu', weights_only=False)
+         model_without_ddp.load_state_dict(checkpoint['model'])
+         if args.use_ema:
+             if 'ema_model' in checkpoint:
+@@ -224,7 +237,7 @@ def main(args):
+             args.start_epoch = checkpoint['epoch'] + 1
+ 
+     if (not args.resume) and args.pretrain_model_path:
+-        checkpoint = torch.load(args.pretrain_model_path, map_location='cpu')['model']
++        checkpoint = torch.load(args.pretrain_model_path, map_location='cpu', weights_only=False)['model']
+         from collections import OrderedDict
+         _ignorekeywordlist = args.finetune_ignore if args.finetune_ignore else []
+         ignorelist = []
+@@ -271,6 +284,8 @@ def main(args):
+         epoch_start_time = time.time()
+         if args.distributed:
+             sampler_train.set_epoch(epoch)
++        elif getattr(args, 'lt_rfs', False):
++            sampler_train.set_epoch(epoch)   # reshuffles the stochastic repeats
+         train_stats = train_one_epoch(
+             model, criterion, data_loader_train, optimizer, device, epoch,
+             args.clip_max_norm, wo_class_error=wo_class_error, lr_scheduler=lr_scheduler, args=args, logger=(logger if args.save_log else None), ema_m=ema_m)
+diff --git a/main.py.orig b/main.py.orig
+new file mode 100644
+index 0000000..213e75a
+--- /dev/null
++++ b/main.py.orig
+@@ -0,0 +1,388 @@
++# Copyright (c) 2022 IDEA. All Rights Reserved.
++# ------------------------------------------------------------------------
++import argparse
++import datetime
++import json
++import random
++import time
++from pathlib import Path
++import os, sys
++import numpy as np
++
++import torch
++from torch.utils.data import DataLoader, DistributedSampler
++
++from util.get_param_dicts import get_param_dict
++from util.logger import setup_logger
++from util.slconfig import DictAction, SLConfig
++from util.utils import ModelEma, BestMetricHolder
++import util.misc as utils
++
++import datasets
++from datasets import build_dataset, get_coco_api_from_dataset
++from engine import evaluate, train_one_epoch, test
++
++
++
++def get_args_parser():
++    parser = argparse.ArgumentParser('Set transformer detector', add_help=False)
++    parser.add_argument('--config_file', '-c', type=str, required=True)
++    parser.add_argument('--options',
++        nargs='+',
++        action=DictAction,
++        help='override some settings in the used config, the key-value pair '
++        'in xxx=yyy format will be merged into config file.')
++
++    # dataset parameters
++    parser.add_argument('--dataset_file', default='coco')
++    parser.add_argument('--coco_path', type=str, default='/comp_robot/cv_public_dataset/COCO2017/')
++    parser.add_argument('--coco_panoptic_path', type=str)
++    parser.add_argument('--remove_difficult', action='store_true')
++    parser.add_argument('--fix_size', action='store_true')
++
++    # training parameters
++    parser.add_argument('--output_dir', default='',
++                        help='path where to save, empty for no saving')
++    parser.add_argument('--note', default='',
++                        help='add some notes to the experiment')
++    parser.add_argument('--device', default='cuda',
++                        help='device to use for training / testing')
++    parser.add_argument('--seed', default=42, type=int)
++    parser.add_argument('--resume', default='', help='resume from checkpoint')
++    parser.add_argument('--pretrain_model_path', help='load from other checkpoint')
++    parser.add_argument('--finetune_ignore', type=str, nargs='+')
++    parser.add_argument('--start_epoch', default=0, type=int, metavar='N',
++                        help='start epoch')
++    parser.add_argument('--eval', action='store_true')
++    parser.add_argument('--num_workers', default=10, type=int)
++    parser.add_argument('--test', action='store_true')
++    parser.add_argument('--debug', action='store_true')
++    parser.add_argument('--find_unused_params', action='store_true')
++
++    parser.add_argument('--save_results', action='store_true')
++    parser.add_argument('--save_log', action='store_true')
++
++    # distributed training parameters
++    parser.add_argument('--world_size', default=1, type=int,
++                        help='number of distributed processes')
++    parser.add_argument('--dist_url', default='env://', help='url used to set up distributed training')
++    parser.add_argument('--rank', default=0, type=int,
++                        help='number of distributed processes')
++    parser.add_argument("--local_rank", type=int, help='local rank for DistributedDataParallel')
++    parser.add_argument('--amp', action='store_true',
++                        help="Train with mixed precision")
++    
++    return parser
++
++
++def build_model_main(args):
++    # we use register to maintain models from catdet6 on.
++    from models.registry import MODULE_BUILD_FUNCS
++    assert args.modelname in MODULE_BUILD_FUNCS._module_dict
++    build_func = MODULE_BUILD_FUNCS.get(args.modelname)
++    model, criterion, postprocessors = build_func(args)
++    return model, criterion, postprocessors
++
++def main(args):
++    utils.init_distributed_mode(args)
++    # load cfg file and update the args
++    print("Loading config file from {}".format(args.config_file))
++    time.sleep(args.rank * 0.02)
++    cfg = SLConfig.fromfile(args.config_file)
++    if args.options is not None:
++        cfg.merge_from_dict(args.options)
++    if args.rank == 0:
++        save_cfg_path = os.path.join(args.output_dir, "config_cfg.py")
++        cfg.dump(save_cfg_path)
++        save_json_path = os.path.join(args.output_dir, "config_args_raw.json")
++        with open(save_json_path, 'w') as f:
++            json.dump(vars(args), f, indent=2)
++    cfg_dict = cfg._cfg_dict.to_dict()
++    args_vars = vars(args)
++    for k,v in cfg_dict.items():
++        if k not in args_vars:
++            setattr(args, k, v)
++        else:
++            raise ValueError("Key {} can used by args only".format(k))
++
++    # update some new args temporally
++    if not getattr(args, 'use_ema', None):
++        args.use_ema = False
++    if not getattr(args, 'debug', None):
++        args.debug = False
++
++    # setup logger
++    os.makedirs(args.output_dir, exist_ok=True)
++    logger = setup_logger(output=os.path.join(args.output_dir, 'info.txt'), distributed_rank=args.rank, color=False, name="detr")
++    logger.info("git:\n  {}\n".format(utils.get_sha()))
++    logger.info("Command: "+' '.join(sys.argv))
++    if args.rank == 0:
++        save_json_path = os.path.join(args.output_dir, "config_args_all.json")
++        with open(save_json_path, 'w') as f:
++            json.dump(vars(args), f, indent=2)
++        logger.info("Full config saved to {}".format(save_json_path))
++    logger.info('world size: {}'.format(args.world_size))
++    logger.info('rank: {}'.format(args.rank))
++    logger.info('local_rank: {}'.format(args.local_rank))
++    logger.info("args: " + str(args) + '\n')
++
++
++    if args.frozen_weights is not None:
++        assert args.masks, "Frozen training is meant for segmentation only"
++    print(args)
++
++    device = torch.device(args.device)
++
++    # fix the seed for reproducibility
++    seed = args.seed + utils.get_rank()
++    torch.manual_seed(seed)
++    np.random.seed(seed)
++    random.seed(seed)
++
++    # build model
++    model, criterion, postprocessors = build_model_main(args)
++    wo_class_error = False
++    model.to(device)
++
++    # ema
++    if args.use_ema:
++        ema_m = ModelEma(model, args.ema_decay)
++    else:
++        ema_m = None
++
++    model_without_ddp = model
++    if args.distributed:
++        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], find_unused_parameters=args.find_unused_params)
++        model_without_ddp = model.module
++    n_parameters = sum(p.numel() for p in model.parameters() if p.requires_grad)
++    logger.info('number of params:'+str(n_parameters))
++    logger.info("params:\n"+json.dumps({n: p.numel() for n, p in model.named_parameters() if p.requires_grad}, indent=2))
++
++    param_dicts = get_param_dict(args, model_without_ddp)
++
++    optimizer = torch.optim.AdamW(param_dicts, lr=args.lr,
++                                  weight_decay=args.weight_decay)
++    
++
++    dataset_train = build_dataset(image_set='train', args=args)
++    dataset_val = build_dataset(image_set='val', args=args)
++
++    if args.distributed:
++        sampler_train = DistributedSampler(dataset_train)
++        sampler_val = DistributedSampler(dataset_val, shuffle=False)
++    else:
++        sampler_train = torch.utils.data.RandomSampler(dataset_train)
++        sampler_val = torch.utils.data.SequentialSampler(dataset_val)
++
++    batch_sampler_train = torch.utils.data.BatchSampler(
++        sampler_train, args.batch_size, drop_last=True)
++
++    data_loader_train = DataLoader(dataset_train, batch_sampler=batch_sampler_train,
++                                   collate_fn=utils.collate_fn, num_workers=args.num_workers)
++    data_loader_val = DataLoader(dataset_val, 1, sampler=sampler_val,
++                                 drop_last=False, collate_fn=utils.collate_fn, num_workers=args.num_workers)
++
++    if args.onecyclelr:
++        lr_scheduler = torch.optim.lr_scheduler.OneCycleLR(optimizer, max_lr=args.lr, steps_per_epoch=len(data_loader_train), epochs=args.epochs, pct_start=0.2)
++    elif args.multi_step_lr:
++        lr_scheduler = torch.optim.lr_scheduler.MultiStepLR(optimizer, milestones=args.lr_drop_list)
++    else:
++        lr_scheduler = torch.optim.lr_scheduler.StepLR(optimizer, args.lr_drop)
++
++
++    if args.dataset_file == "coco_panoptic":
++        # We also evaluate AP during panoptic training, on original coco DS
++        coco_val = datasets.coco.build("val", args)
++        base_ds = get_coco_api_from_dataset(coco_val)
++    else:
++        base_ds = get_coco_api_from_dataset(dataset_val)
++
++    if args.frozen_weights is not None:
++        checkpoint = torch.load(args.frozen_weights, map_location='cpu')
++        model_without_ddp.detr.load_state_dict(checkpoint['model'])
++
++    output_dir = Path(args.output_dir)
++    if os.path.exists(os.path.join(args.output_dir, 'checkpoint.pth')):
++        args.resume = os.path.join(args.output_dir, 'checkpoint.pth')
++    if args.resume:
++        if args.resume.startswith('https'):
++            checkpoint = torch.hub.load_state_dict_from_url(
++                args.resume, map_location='cpu', check_hash=True)
++        else:
++            checkpoint = torch.load(args.resume, map_location='cpu')
++        model_without_ddp.load_state_dict(checkpoint['model'])
++        if args.use_ema:
++            if 'ema_model' in checkpoint:
++                ema_m.module.load_state_dict(utils.clean_state_dict(checkpoint['ema_model']))
++            else:
++                del ema_m
++                ema_m = ModelEma(model, args.ema_decay)                
++
++        if not args.eval and 'optimizer' in checkpoint and 'lr_scheduler' in checkpoint and 'epoch' in checkpoint:
++            optimizer.load_state_dict(checkpoint['optimizer'])
++            lr_scheduler.load_state_dict(checkpoint['lr_scheduler'])
++            args.start_epoch = checkpoint['epoch'] + 1
++
++    if (not args.resume) and args.pretrain_model_path:
++        checkpoint = torch.load(args.pretrain_model_path, map_location='cpu')['model']
++        from collections import OrderedDict
++        _ignorekeywordlist = args.finetune_ignore if args.finetune_ignore else []
++        ignorelist = []
++
++        def check_keep(keyname, ignorekeywordlist):
++            for keyword in ignorekeywordlist:
++                if keyword in keyname:
++                    ignorelist.append(keyname)
++                    return False
++            return True
++
++        logger.info("Ignore keys: {}".format(json.dumps(ignorelist, indent=2)))
++        _tmp_st = OrderedDict({k:v for k, v in utils.clean_state_dict(checkpoint).items() if check_keep(k, _ignorekeywordlist)})
++
++        _load_output = model_without_ddp.load_state_dict(_tmp_st, strict=False)
++        logger.info(str(_load_output))
++
++        if args.use_ema:
++            if 'ema_model' in checkpoint:
++                ema_m.module.load_state_dict(utils.clean_state_dict(checkpoint['ema_model']))
++            else:
++                del ema_m
++                ema_m = ModelEma(model, args.ema_decay)        
++
++
++    if args.eval:
++        os.environ['EVAL_FLAG'] = 'TRUE'
++        test_stats, coco_evaluator = evaluate(model, criterion, postprocessors,
++                                              data_loader_val, base_ds, device, args.output_dir, wo_class_error=wo_class_error, args=args)
++        if args.output_dir:
++            utils.save_on_master(coco_evaluator.coco_eval["bbox"].eval, output_dir / "eval.pth")
++
++        log_stats = {**{f'test_{k}': v for k, v in test_stats.items()} }
++        if args.output_dir and utils.is_main_process():
++            with (output_dir / "log.txt").open("a") as f:
++                f.write(json.dumps(log_stats) + "\n")
++
++        return
++
++    print("Start training")
++    start_time = time.time()
++    best_map_holder = BestMetricHolder(use_ema=args.use_ema)
++    for epoch in range(args.start_epoch, args.epochs):
++        epoch_start_time = time.time()
++        if args.distributed:
++            sampler_train.set_epoch(epoch)
++        train_stats = train_one_epoch(
++            model, criterion, data_loader_train, optimizer, device, epoch,
++            args.clip_max_norm, wo_class_error=wo_class_error, lr_scheduler=lr_scheduler, args=args, logger=(logger if args.save_log else None), ema_m=ema_m)
++        if args.output_dir:
++            checkpoint_paths = [output_dir / 'checkpoint.pth']
++
++        if not args.onecyclelr:
++            lr_scheduler.step()
++        if args.output_dir:
++            checkpoint_paths = [output_dir / 'checkpoint.pth']
++            # extra checkpoint before LR drop and every 100 epochs
++            if (epoch + 1) % args.lr_drop == 0 or (epoch + 1) % args.save_checkpoint_interval == 0:
++                checkpoint_paths.append(output_dir / f'checkpoint{epoch:04}.pth')
++            for checkpoint_path in checkpoint_paths:
++                weights = {
++                    'model': model_without_ddp.state_dict(),
++                    'optimizer': optimizer.state_dict(),
++                    'lr_scheduler': lr_scheduler.state_dict(),
++                    'epoch': epoch,
++                    'args': args,
++                }
++                if args.use_ema:
++                    weights.update({
++                        'ema_model': ema_m.module.state_dict(),
++                    })
++                utils.save_on_master(weights, checkpoint_path)
++                
++        # eval
++        test_stats, coco_evaluator = evaluate(
++            model, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir,
++            wo_class_error=wo_class_error, args=args, logger=(logger if args.save_log else None)
++        )
++        map_regular = test_stats['coco_eval_bbox'][0]
++        _isbest = best_map_holder.update(map_regular, epoch, is_ema=False)
++        if _isbest:
++            checkpoint_path = output_dir / 'checkpoint_best_regular.pth'
++            utils.save_on_master({
++                'model': model_without_ddp.state_dict(),
++                'optimizer': optimizer.state_dict(),
++                'lr_scheduler': lr_scheduler.state_dict(),
++                'epoch': epoch,
++                'args': args,
++            }, checkpoint_path)
++        log_stats = {
++            **{f'train_{k}': v for k, v in train_stats.items()},
++            **{f'test_{k}': v for k, v in test_stats.items()},
++        }
++
++        # eval ema
++        if args.use_ema:
++            ema_test_stats, ema_coco_evaluator = evaluate(
++                ema_m.module, criterion, postprocessors, data_loader_val, base_ds, device, args.output_dir,
++                wo_class_error=wo_class_error, args=args, logger=(logger if args.save_log else None)
++            )
++            log_stats.update({f'ema_test_{k}': v for k,v in ema_test_stats.items()})
++            map_ema = ema_test_stats['coco_eval_bbox'][0]
++            _isbest = best_map_holder.update(map_ema, epoch, is_ema=True)
++            if _isbest:
++                checkpoint_path = output_dir / 'checkpoint_best_ema.pth'
++                utils.save_on_master({
++                    'model': ema_m.module.state_dict(),
++                    'optimizer': optimizer.state_dict(),
++                    'lr_scheduler': lr_scheduler.state_dict(),
++                    'epoch': epoch,
++                    'args': args,
++                }, checkpoint_path)
++        log_stats.update(best_map_holder.summary())
++
++        ep_paras = {
++                'epoch': epoch,
++                'n_parameters': n_parameters
++            }
++        log_stats.update(ep_paras)
++        try:
++            log_stats.update({'now_time': str(datetime.datetime.now())})
++        except:
++            pass
++        
++        epoch_time = time.time() - epoch_start_time
++        epoch_time_str = str(datetime.timedelta(seconds=int(epoch_time)))
++        log_stats['epoch_time'] = epoch_time_str
++
++        if args.output_dir and utils.is_main_process():
++            with (output_dir / "log.txt").open("a") as f:
++                f.write(json.dumps(log_stats) + "\n")
++
++            # for evaluation logs
++            if coco_evaluator is not None:
++                (output_dir / 'eval').mkdir(exist_ok=True)
++                if "bbox" in coco_evaluator.coco_eval:
++                    filenames = ['latest.pth']
++                    if epoch % 50 == 0:
++                        filenames.append(f'{epoch:03}.pth')
++                    for name in filenames:
++                        torch.save(coco_evaluator.coco_eval["bbox"].eval,
++                                   output_dir / "eval" / name)
++    total_time = time.time() - start_time
++    total_time_str = str(datetime.timedelta(seconds=int(total_time)))
++    print('Training time {}'.format(total_time_str))
++
++    # remove the copied files.
++    copyfilelist = vars(args).get('copyfilelist')
++    if copyfilelist and args.local_rank == 0:
++        from datasets.data_util import remove
++        for filename in copyfilelist:
++            print("Removing: {}".format(filename))
++            remove(filename)
++
++
++if __name__ == '__main__':
++    parser = argparse.ArgumentParser('DETR training and evaluation script', parents=[get_args_parser()])
++    args = parser.parse_args()
++    if args.output_dir:
++        Path(args.output_dir).mkdir(parents=True, exist_ok=True)
++    main(args)
+diff --git a/models/dino/dino.py b/models/dino/dino.py
+index 15131ba..1766e43 100644
+--- a/models/dino/dino.py
++++ b/models/dino/dino.py
+@@ -370,6 +370,12 @@ class SetCriterion(nn.Module):
+         target_classes_onehot.scatter_(2, target_classes.unsqueeze(-1), 1)
+ 
+         target_classes_onehot = target_classes_onehot[:,:,:-1]
++        if getattr(self, 'lt_la_loss', False):
++            # long-tail: subtract tau*log p(c) from the logits before the focal
++            # loss (logit adjustment, Menon et al. 2021, sigmoid form). Rare
++            # classes get a head start; the prior comes from the TRAIN json only.
++            src_logits = src_logits - self.lt_tau * self.lt_log_priors.to(
++                src_logits.device, src_logits.dtype)
+         loss_ce = sigmoid_focal_loss(src_logits, target_classes_onehot, num_boxes, alpha=self.focal_alpha, gamma=2) * src_logits.shape[1]
+         losses = {'loss_ce': loss_ce}
+ 
+@@ -809,6 +815,41 @@ def build_dino(args):
+                              focal_alpha=args.focal_alpha, losses=losses,
+                              )
+     criterion.to(device)
++
++    # ---- long-tail wiring (all gated; absent flags leave stock behaviour) ----
++    _lt_la_loss = bool(getattr(args, 'lt_la_loss', False))
++    _lt_la_cost = bool(getattr(args, 'lt_la_cost', False))
++    _lt_freq_dn = bool(getattr(args, 'lt_freq_dn', False))
++    if _lt_la_loss or _lt_la_cost or _lt_freq_dn:
++        import json as _json, os as _os
++        _tj = _os.path.join(args.coco_path, 'annotations', 'instances_train2017.json')
++        with open(_tj) as _f:
++            _annotations = _json.load(_f)['annotations']
++        _counts = torch.zeros(num_classes)
++        for _a in _annotations:
++            _c = int(_a['category_id'])
++            if 0 <= _c < num_classes:
++                _counts[_c] += 1
++        _p = _counts / _counts.sum().clamp(min=1)
++        # unused/absent classes get log-prior 0 (no adjustment) rather than -inf
++        _log_priors = torch.where(_counts > 0, _p.clamp(min=1e-12).log(),
++                                  torch.zeros_like(_p))
++        _tau = float(getattr(args, 'lt_tau', 1.0))
++        if _lt_la_loss:
++            criterion.lt_la_loss = True
++            criterion.lt_tau = _tau
++            criterion.lt_log_priors = _log_priors
++        if _lt_la_cost:
++            matcher.lt_la_cost = True
++            matcher.lt_tau = _tau
++            matcher.lt_log_priors = _log_priors
++        if _lt_freq_dn:
++            from . import dn_components as _dnc
++            _w = torch.where(_counts > 0, _counts.clamp(min=1.0) ** -0.5,
++                             torch.zeros_like(_counts))
++            _dnc.LT_FREQ_DN_WEIGHTS = _w / _w.sum().clamp(min=1e-12)
++        print('[longtail] la_loss=%s la_cost=%s freq_dn=%s tau=%.2f (priors from %s)'
++              % (_lt_la_loss, _lt_la_cost, _lt_freq_dn, _tau, _tj))
+     postprocessors = {'bbox': PostProcess(num_select=args.num_select, nms_iou_threshold=args.nms_iou_threshold)}
+     if args.masks:
+         postprocessors['segm'] = PostProcessSegm()
+diff --git a/models/dino/dn_components.py b/models/dino/dn_components.py
+index e9f995b..4700126 100644
+--- a/models/dino/dn_components.py
++++ b/models/dino/dn_components.py
+@@ -9,6 +9,9 @@
+ 
+ 
+ import torch
++
++# Set by build_dino when args.lt_freq_dn is enabled; None = stock behaviour.
++LT_FREQ_DN_WEIGHTS = None
+ from util.misc import (NestedTensor, nested_tensor_from_tensor_list,
+                        accuracy, get_world_size, interpolate,
+                        is_dist_avail_and_initialized, inverse_sigmoid)
+@@ -63,7 +66,16 @@ def prepare_for_cdn(dn_args, training, num_queries, num_classes, hidden_dim, lab
+         if label_noise_ratio > 0:
+             p = torch.rand_like(known_labels_expaned.float())
+             chosen_indice = torch.nonzero(p < (label_noise_ratio * 0.5)).view(-1)  # half of bbox prob
+-            new_label = torch.randint_like(chosen_indice, 0, num_classes)  # randomly put a new one here
++            if LT_FREQ_DN_WEIGHTS is not None:
++                # long-tail: draw the fake label from an inverse-sqrt-frequency
++                # distribution instead of uniform, so rare classes actually
++                # appear in the denoising task (weights[0]=0 keeps the unused
++                # dummy class out entirely).
++                new_label = LT_FREQ_DN_WEIGHTS.multinomial(
++                    chosen_indice.numel(), replacement=True
++                ).to(device=chosen_indice.device, dtype=chosen_indice.dtype)
++            else:
++                new_label = torch.randint_like(chosen_indice, 0, num_classes)  # randomly put a new one here
+             known_labels_expaned.scatter_(0, chosen_indice, new_label)
+         single_pad = int(max(known_num))
+ 
+diff --git a/models/dino/matcher.py b/models/dino/matcher.py
+index 94c7cce..453bd88 100644
+--- a/models/dino/matcher.py
++++ b/models/dino/matcher.py
+@@ -66,7 +66,14 @@ class HungarianMatcher(nn.Module):
+         bs, num_queries = outputs["pred_logits"].shape[:2]
+ 
+         # We flatten to compute the cost matrices in a batch
+-        out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()  # [batch_size * num_queries, num_classes]
++        out_logits = outputs["pred_logits"].flatten(0, 1)  # [batch_size * num_queries, num_classes]
++        if getattr(self, 'lt_la_cost', False):
++            # long-tail: the same prior adjustment used in the loss, applied in
++            # the matching cost, so assignment and supervision agree on what a
++            # 'good' tail prediction is.
++            out_logits = out_logits - self.lt_tau * self.lt_log_priors.to(
++                out_logits.device, out_logits.dtype)
++        out_prob = out_logits.sigmoid()
+         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
+ 
+         # Also concat the target labels and boxes
+@@ -139,7 +146,14 @@ class SimpleMinsumMatcher(nn.Module):
+         bs, num_queries = outputs["pred_logits"].shape[:2]
+ 
+         # We flatten to compute the cost matrices in a batch
+-        out_prob = outputs["pred_logits"].flatten(0, 1).sigmoid()  # [batch_size * num_queries, num_classes]
++        out_logits = outputs["pred_logits"].flatten(0, 1)  # [batch_size * num_queries, num_classes]
++        if getattr(self, 'lt_la_cost', False):
++            # long-tail: the same prior adjustment used in the loss, applied in
++            # the matching cost, so assignment and supervision agree on what a
++            # 'good' tail prediction is.
++            out_logits = out_logits - self.lt_tau * self.lt_log_priors.to(
++                out_logits.device, out_logits.dtype)
++        out_prob = out_logits.sigmoid()
+         out_bbox = outputs["pred_boxes"].flatten(0, 1)  # [batch_size * num_queries, 4]
+ 
+         # Also concat the target labels and boxes
+diff --git a/models/dino/ops/MultiScaleDeformableAttention.egg-info/PKG-INFO b/models/dino/ops/MultiScaleDeformableAttention.egg-info/PKG-INFO
+new file mode 100644
+index 0000000..86fadb6
+--- /dev/null
++++ b/models/dino/ops/MultiScaleDeformableAttention.egg-info/PKG-INFO
+@@ -0,0 +1,9 @@
++Metadata-Version: 2.4
++Name: MultiScaleDeformableAttention
++Version: 1.0
++Summary: PyTorch Wrapper for CUDA Functions of Multi-Scale Deformable Attention
++Home-page: https://github.com/fundamentalvision/Deformable-DETR
++Author: Weijie Su
++Dynamic: author
++Dynamic: home-page
++Dynamic: summary
+diff --git a/models/dino/ops/MultiScaleDeformableAttention.egg-info/SOURCES.txt b/models/dino/ops/MultiScaleDeformableAttention.egg-info/SOURCES.txt
+new file mode 100644
+index 0000000..0f190c8
+--- /dev/null
++++ b/models/dino/ops/MultiScaleDeformableAttention.egg-info/SOURCES.txt
+@@ -0,0 +1,12 @@
++setup.py
++/home/mostafa/DINO/models/dino/ops/src/vision.cpp
++/home/mostafa/DINO/models/dino/ops/src/cpu/ms_deform_attn_cpu.cpp
++/home/mostafa/DINO/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu
++MultiScaleDeformableAttention.egg-info/PKG-INFO
++MultiScaleDeformableAttention.egg-info/SOURCES.txt
++MultiScaleDeformableAttention.egg-info/dependency_links.txt
++MultiScaleDeformableAttention.egg-info/top_level.txt
++functions/__init__.py
++functions/ms_deform_attn_func.py
++modules/__init__.py
++modules/ms_deform_attn.py
+\ No newline at end of file
+diff --git a/models/dino/ops/MultiScaleDeformableAttention.egg-info/dependency_links.txt b/models/dino/ops/MultiScaleDeformableAttention.egg-info/dependency_links.txt
+new file mode 100644
+index 0000000..8b13789
+--- /dev/null
++++ b/models/dino/ops/MultiScaleDeformableAttention.egg-info/dependency_links.txt
+@@ -0,0 +1 @@
++
+diff --git a/models/dino/ops/MultiScaleDeformableAttention.egg-info/top_level.txt b/models/dino/ops/MultiScaleDeformableAttention.egg-info/top_level.txt
+new file mode 100644
+index 0000000..25d8f77
+--- /dev/null
++++ b/models/dino/ops/MultiScaleDeformableAttention.egg-info/top_level.txt
+@@ -0,0 +1,3 @@
++MultiScaleDeformableAttention
++functions
++modules
+diff --git a/models/dino/ops/build/lib.linux-x86_64-cpython-311/MultiScaleDeformableAttention.cpython-311-x86_64-linux-gnu.so b/models/dino/ops/build/lib.linux-x86_64-cpython-311/MultiScaleDeformableAttention.cpython-311-x86_64-linux-gnu.so
+new file mode 100755
+index 0000000..06d00a0
+Binary files /dev/null and b/models/dino/ops/build/lib.linux-x86_64-cpython-311/MultiScaleDeformableAttention.cpython-311-x86_64-linux-gnu.so differ
+diff --git a/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/__init__.py b/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/__init__.py
+new file mode 100644
+index 0000000..8a2197b
+--- /dev/null
++++ b/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/__init__.py
+@@ -0,0 +1,10 @@
++# ------------------------------------------------------------------------------------------------
++# Deformable DETR
++# Copyright (c) 2020 SenseTime. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------------------------------
++# Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
++# ------------------------------------------------------------------------------------------------
++
++from .ms_deform_attn_func import MSDeformAttnFunction
++
+diff --git a/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/ms_deform_attn_func.py b/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/ms_deform_attn_func.py
+new file mode 100644
+index 0000000..8c5df8c
+--- /dev/null
++++ b/models/dino/ops/build/lib.linux-x86_64-cpython-311/functions/ms_deform_attn_func.py
+@@ -0,0 +1,61 @@
++# ------------------------------------------------------------------------------------------------
++# Deformable DETR
++# Copyright (c) 2020 SenseTime. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------------------------------
++# Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
++# ------------------------------------------------------------------------------------------------
++
++from __future__ import absolute_import
++from __future__ import print_function
++from __future__ import division
++
++import torch
++import torch.nn.functional as F
++from torch.autograd import Function
++from torch.autograd.function import once_differentiable
++
++import MultiScaleDeformableAttention as MSDA
++
++
++class MSDeformAttnFunction(Function):
++    @staticmethod
++    def forward(ctx, value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, im2col_step):
++        ctx.im2col_step = im2col_step
++        output = MSDA.ms_deform_attn_forward(
++            value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, ctx.im2col_step)
++        ctx.save_for_backward(value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights)
++        return output
++
++    @staticmethod
++    @once_differentiable
++    def backward(ctx, grad_output):
++        value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights = ctx.saved_tensors
++        grad_value, grad_sampling_loc, grad_attn_weight = \
++            MSDA.ms_deform_attn_backward(
++                value, value_spatial_shapes, value_level_start_index, sampling_locations, attention_weights, grad_output, ctx.im2col_step)
++
++        return grad_value, None, None, grad_sampling_loc, grad_attn_weight, None
++
++
++def ms_deform_attn_core_pytorch(value, value_spatial_shapes, sampling_locations, attention_weights):
++    # for debug and test only,
++    # need to use cuda version instead
++    N_, S_, M_, D_ = value.shape
++    _, Lq_, M_, L_, P_, _ = sampling_locations.shape
++    value_list = value.split([H_ * W_ for H_, W_ in value_spatial_shapes], dim=1)
++    sampling_grids = 2 * sampling_locations - 1
++    sampling_value_list = []
++    for lid_, (H_, W_) in enumerate(value_spatial_shapes):
++        # N_, H_*W_, M_, D_ -> N_, H_*W_, M_*D_ -> N_, M_*D_, H_*W_ -> N_*M_, D_, H_, W_
++        value_l_ = value_list[lid_].flatten(2).transpose(1, 2).reshape(N_*M_, D_, H_, W_)
++        # N_, Lq_, M_, P_, 2 -> N_, M_, Lq_, P_, 2 -> N_*M_, Lq_, P_, 2
++        sampling_grid_l_ = sampling_grids[:, :, :, lid_].transpose(1, 2).flatten(0, 1)
++        # N_*M_, D_, Lq_, P_
++        sampling_value_l_ = F.grid_sample(value_l_, sampling_grid_l_,
++                                          mode='bilinear', padding_mode='zeros', align_corners=False)
++        sampling_value_list.append(sampling_value_l_)
++    # (N_, Lq_, M_, L_, P_) -> (N_, M_, Lq_, L_, P_) -> (N_, M_, 1, Lq_, L_*P_)
++    attention_weights = attention_weights.transpose(1, 2).reshape(N_*M_, 1, Lq_, L_*P_)
++    output = (torch.stack(sampling_value_list, dim=-2).flatten(-2) * attention_weights).sum(-1).view(N_, M_*D_, Lq_)
++    return output.transpose(1, 2).contiguous()
+diff --git a/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/__init__.py b/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/__init__.py
+new file mode 100644
+index 0000000..f82cb1a
+--- /dev/null
++++ b/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/__init__.py
+@@ -0,0 +1,9 @@
++# ------------------------------------------------------------------------------------------------
++# Deformable DETR
++# Copyright (c) 2020 SenseTime. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------------------------------
++# Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
++# ------------------------------------------------------------------------------------------------
++
++from .ms_deform_attn import MSDeformAttn
+diff --git a/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/ms_deform_attn.py b/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/ms_deform_attn.py
+new file mode 100644
+index 0000000..0c22ac8
+--- /dev/null
++++ b/models/dino/ops/build/lib.linux-x86_64-cpython-311/modules/ms_deform_attn.py
+@@ -0,0 +1,126 @@
++# ------------------------------------------------------------------------------------------------
++# Deformable DETR
++# Copyright (c) 2020 SenseTime. All Rights Reserved.
++# Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++# ------------------------------------------------------------------------------------------------
++# Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
++# ------------------------------------------------------------------------------------------------
++
++from __future__ import absolute_import
++from __future__ import print_function
++from __future__ import division
++
++import warnings
++import math
++
++import torch
++from torch import nn
++import torch.nn.functional as F
++from torch.nn.init import xavier_uniform_, constant_
++
++from ..functions import MSDeformAttnFunction
++
++
++def _is_power_of_2(n):
++    if (not isinstance(n, int)) or (n < 0):
++        raise ValueError("invalid input for _is_power_of_2: {} (type: {})".format(n, type(n)))
++    return (n & (n-1) == 0) and n != 0
++
++
++class MSDeformAttn(nn.Module):
++    def __init__(self, d_model=256, n_levels=4, n_heads=8, n_points=4):
++        """
++        Multi-Scale Deformable Attention Module
++        :param d_model      hidden dimension
++        :param n_levels     number of feature levels
++        :param n_heads      number of attention heads
++        :param n_points     number of sampling points per attention head per feature level
++        """
++        super().__init__()
++        if d_model % n_heads != 0:
++            raise ValueError('d_model must be divisible by n_heads, but got {} and {}'.format(d_model, n_heads))
++        _d_per_head = d_model // n_heads
++        # you'd better set _d_per_head to a power of 2 which is more efficient in our CUDA implementation
++        if not _is_power_of_2(_d_per_head):
++            warnings.warn("You'd better set d_model in MSDeformAttn to make the dimension of each attention head a power of 2 "
++                          "which is more efficient in our CUDA implementation.")
++
++        self.im2col_step = 64
++
++        self.d_model = d_model
++        self.n_levels = n_levels
++        self.n_heads = n_heads
++        self.n_points = n_points
++
++        self.sampling_offsets = nn.Linear(d_model, n_heads * n_levels * n_points * 2)
++        self.attention_weights = nn.Linear(d_model, n_heads * n_levels * n_points)
++        self.value_proj = nn.Linear(d_model, d_model)
++        self.output_proj = nn.Linear(d_model, d_model)
++
++        self._reset_parameters()
++
++    def _reset_parameters(self):
++        constant_(self.sampling_offsets.weight.data, 0.)
++        thetas = torch.arange(self.n_heads, dtype=torch.float32) * (2.0 * math.pi / self.n_heads)
++        grid_init = torch.stack([thetas.cos(), thetas.sin()], -1)
++        grid_init = (grid_init / grid_init.abs().max(-1, keepdim=True)[0]).view(self.n_heads, 1, 1, 2).repeat(1, self.n_levels, self.n_points, 1)
++        for i in range(self.n_points):
++            grid_init[:, :, i, :] *= i + 1
++        with torch.no_grad():
++            self.sampling_offsets.bias = nn.Parameter(grid_init.view(-1))
++        constant_(self.attention_weights.weight.data, 0.)
++        constant_(self.attention_weights.bias.data, 0.)
++        xavier_uniform_(self.value_proj.weight.data)
++        constant_(self.value_proj.bias.data, 0.)
++        xavier_uniform_(self.output_proj.weight.data)
++        constant_(self.output_proj.bias.data, 0.)
++
++    def forward(self, query, reference_points, input_flatten, input_spatial_shapes, input_level_start_index, input_padding_mask=None):
++        """
++        :param query                       (N, Length_{query}, C)
++        :param reference_points            (N, Length_{query}, n_levels, 2), range in [0, 1], top-left (0,0), bottom-right (1, 1), including padding area
++                                        or (N, Length_{query}, n_levels, 4), add additional (w, h) to form reference boxes
++        :param input_flatten               (N, \sum_{l=0}^{L-1} H_l \cdot W_l, C)
++        :param input_spatial_shapes        (n_levels, 2), [(H_0, W_0), (H_1, W_1), ..., (H_{L-1}, W_{L-1})]
++        :param input_level_start_index     (n_levels, ), [0, H_0*W_0, H_0*W_0+H_1*W_1, H_0*W_0+H_1*W_1+H_2*W_2, ..., H_0*W_0+H_1*W_1+...+H_{L-1}*W_{L-1}]
++        :param input_padding_mask          (N, \sum_{l=0}^{L-1} H_l \cdot W_l), True for padding elements, False for non-padding elements
++
++        :return output                     (N, Length_{query}, C)
++        """
++        N, Len_q, _ = query.shape
++        N, Len_in, _ = input_flatten.shape
++        assert (input_spatial_shapes[:, 0] * input_spatial_shapes[:, 1]).sum() == Len_in
++
++        value = self.value_proj(input_flatten)
++        if input_padding_mask is not None:
++            value = value.masked_fill(input_padding_mask[..., None], float(0))
++        value = value.view(N, Len_in, self.n_heads, self.d_model // self.n_heads)
++        sampling_offsets = self.sampling_offsets(query).view(N, Len_q, self.n_heads, self.n_levels, self.n_points, 2)
++        attention_weights = self.attention_weights(query).view(N, Len_q, self.n_heads, self.n_levels * self.n_points)
++        attention_weights = F.softmax(attention_weights, -1).view(N, Len_q, self.n_heads, self.n_levels, self.n_points)
++        # N, Len_q, n_heads, n_levels, n_points, 2
++        if reference_points.shape[-1] == 2:
++            offset_normalizer = torch.stack([input_spatial_shapes[..., 1], input_spatial_shapes[..., 0]], -1)
++            sampling_locations = reference_points[:, :, None, :, None, :] \
++                                 + sampling_offsets / offset_normalizer[None, None, None, :, None, :]
++        elif reference_points.shape[-1] == 4:
++            sampling_locations = reference_points[:, :, None, :, None, :2] \
++                                 + sampling_offsets / self.n_points * reference_points[:, :, None, :, None, 2:] * 0.5
++        else:
++            raise ValueError(
++                'Last dim of reference_points must be 2 or 4, but get {} instead.'.format(reference_points.shape[-1]))
++
++        # for amp
++        if value.dtype == torch.float16:
++            # for mixed precision
++            output = MSDeformAttnFunction.apply(
++            value.to(torch.float32), input_spatial_shapes, input_level_start_index, sampling_locations.to(torch.float32), attention_weights, self.im2col_step)
++            output = output.to(torch.float16)
++            output = self.output_proj(output)
++            return output
++
++
++        output = MSDeformAttnFunction.apply(
++            value, input_spatial_shapes, input_level_start_index, sampling_locations, attention_weights, self.im2col_step)
++        output = self.output_proj(output)
++        return output
+diff --git a/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cpu/ms_deform_attn_cpu.o b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cpu/ms_deform_attn_cpu.o
+new file mode 100644
+index 0000000..18d7fb8
+Binary files /dev/null and b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cpu/ms_deform_attn_cpu.o differ
+diff --git a/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cuda/ms_deform_attn_cuda.o b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cuda/ms_deform_attn_cuda.o
+new file mode 100644
+index 0000000..05644e1
+Binary files /dev/null and b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/cuda/ms_deform_attn_cuda.o differ
+diff --git a/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/vision.o b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/vision.o
+new file mode 100644
+index 0000000..cbf3775
+Binary files /dev/null and b/models/dino/ops/build/temp.linux-x86_64-cpython-311/home/mostafa/DINO/models/dino/ops/src/vision.o differ
+diff --git a/models/dino/ops/dist/MultiScaleDeformableAttention-1.0-py3.11-linux-x86_64.egg b/models/dino/ops/dist/MultiScaleDeformableAttention-1.0-py3.11-linux-x86_64.egg
+new file mode 100644
+index 0000000..853e1de
+Binary files /dev/null and b/models/dino/ops/dist/MultiScaleDeformableAttention-1.0-py3.11-linux-x86_64.egg differ
+diff --git a/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu b/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu
+index d6d5836..5ea874b 100644
+--- a/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu
++++ b/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu
+@@ -61,7 +61,7 @@ at::Tensor ms_deform_attn_cuda_forward(
+     for (int n = 0; n < batch/im2col_step_; ++n)
+     {
+         auto columns = output_n.select(0, n);
+-        AT_DISPATCH_FLOATING_TYPES(value.type(), "ms_deform_attn_forward_cuda", ([&] {
++        AT_DISPATCH_FLOATING_TYPES(value.scalar_type(), "ms_deform_attn_forward_cuda", ([&] {
+             ms_deformable_im2col_cuda(at::cuda::getCurrentCUDAStream(),
+                 value.data<scalar_t>() + n * im2col_step_ * per_value_size,
+                 spatial_shapes.data<int64_t>(),
+@@ -131,7 +131,7 @@ std::vector<at::Tensor> ms_deform_attn_cuda_backward(
+     for (int n = 0; n < batch/im2col_step_; ++n)
+     {
+         auto grad_output_g = grad_output_n.select(0, n);
+-        AT_DISPATCH_FLOATING_TYPES(value.type(), "ms_deform_attn_backward_cuda", ([&] {
++        AT_DISPATCH_FLOATING_TYPES(value.scalar_type(), "ms_deform_attn_backward_cuda", ([&] {
+             ms_deformable_col2im_cuda(at::cuda::getCurrentCUDAStream(),
+                                     grad_output_g.data<scalar_t>(),
+                                     value.data<scalar_t>() + n * im2col_step_ * per_value_size,
+diff --git a/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu.orig b/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu.orig
+new file mode 100644
+index 0000000..d6d5836
+--- /dev/null
++++ b/models/dino/ops/src/cuda/ms_deform_attn_cuda.cu.orig
+@@ -0,0 +1,153 @@
++/*!
++**************************************************************************************************
++* Deformable DETR
++* Copyright (c) 2020 SenseTime. All Rights Reserved.
++* Licensed under the Apache License, Version 2.0 [see LICENSE for details]
++**************************************************************************************************
++* Modified from https://github.com/chengdazhi/Deformable-Convolution-V2-PyTorch/tree/pytorch_1.0.0
++**************************************************************************************************
++*/
++
++#include <vector>
++#include "cuda/ms_deform_im2col_cuda.cuh"
++
++#include <ATen/ATen.h>
++#include <ATen/cuda/CUDAContext.h>
++#include <cuda.h>
++#include <cuda_runtime.h>
++
++
++at::Tensor ms_deform_attn_cuda_forward(
++    const at::Tensor &value, 
++    const at::Tensor &spatial_shapes,
++    const at::Tensor &level_start_index,
++    const at::Tensor &sampling_loc,
++    const at::Tensor &attn_weight,
++    const int im2col_step)
++{
++    AT_ASSERTM(value.is_contiguous(), "value tensor has to be contiguous");
++    AT_ASSERTM(spatial_shapes.is_contiguous(), "spatial_shapes tensor has to be contiguous");
++    AT_ASSERTM(level_start_index.is_contiguous(), "level_start_index tensor has to be contiguous");
++    AT_ASSERTM(sampling_loc.is_contiguous(), "sampling_loc tensor has to be contiguous");
++    AT_ASSERTM(attn_weight.is_contiguous(), "attn_weight tensor has to be contiguous");
++
++    AT_ASSERTM(value.type().is_cuda(), "value must be a CUDA tensor");
++    AT_ASSERTM(spatial_shapes.type().is_cuda(), "spatial_shapes must be a CUDA tensor");
++    AT_ASSERTM(level_start_index.type().is_cuda(), "level_start_index must be a CUDA tensor");
++    AT_ASSERTM(sampling_loc.type().is_cuda(), "sampling_loc must be a CUDA tensor");
++    AT_ASSERTM(attn_weight.type().is_cuda(), "attn_weight must be a CUDA tensor");
++
++    const int batch = value.size(0);
++    const int spatial_size = value.size(1);
++    const int num_heads = value.size(2);
++    const int channels = value.size(3);
++
++    const int num_levels = spatial_shapes.size(0);
++
++    const int num_query = sampling_loc.size(1);
++    const int num_point = sampling_loc.size(4);
++
++    const int im2col_step_ = std::min(batch, im2col_step);
++
++    AT_ASSERTM(batch % im2col_step_ == 0, "batch(%d) must divide im2col_step(%d)", batch, im2col_step_);
++    
++    auto output = at::zeros({batch, num_query, num_heads, channels}, value.options());
++
++    const int batch_n = im2col_step_;
++    auto output_n = output.view({batch/im2col_step_, batch_n, num_query, num_heads, channels});
++    auto per_value_size = spatial_size * num_heads * channels;
++    auto per_sample_loc_size = num_query * num_heads * num_levels * num_point * 2;
++    auto per_attn_weight_size = num_query * num_heads * num_levels * num_point;
++    for (int n = 0; n < batch/im2col_step_; ++n)
++    {
++        auto columns = output_n.select(0, n);
++        AT_DISPATCH_FLOATING_TYPES(value.type(), "ms_deform_attn_forward_cuda", ([&] {
++            ms_deformable_im2col_cuda(at::cuda::getCurrentCUDAStream(),
++                value.data<scalar_t>() + n * im2col_step_ * per_value_size,
++                spatial_shapes.data<int64_t>(),
++                level_start_index.data<int64_t>(),
++                sampling_loc.data<scalar_t>() + n * im2col_step_ * per_sample_loc_size,
++                attn_weight.data<scalar_t>() + n * im2col_step_ * per_attn_weight_size,
++                batch_n, spatial_size, num_heads, channels, num_levels, num_query, num_point,
++                columns.data<scalar_t>());
++
++        }));
++    }
++
++    output = output.view({batch, num_query, num_heads*channels});
++
++    return output;
++}
++
++
++std::vector<at::Tensor> ms_deform_attn_cuda_backward(
++    const at::Tensor &value, 
++    const at::Tensor &spatial_shapes,
++    const at::Tensor &level_start_index,
++    const at::Tensor &sampling_loc,
++    const at::Tensor &attn_weight,
++    const at::Tensor &grad_output,
++    const int im2col_step)
++{
++
++    AT_ASSERTM(value.is_contiguous(), "value tensor has to be contiguous");
++    AT_ASSERTM(spatial_shapes.is_contiguous(), "spatial_shapes tensor has to be contiguous");
++    AT_ASSERTM(level_start_index.is_contiguous(), "level_start_index tensor has to be contiguous");
++    AT_ASSERTM(sampling_loc.is_contiguous(), "sampling_loc tensor has to be contiguous");
++    AT_ASSERTM(attn_weight.is_contiguous(), "attn_weight tensor has to be contiguous");
++    AT_ASSERTM(grad_output.is_contiguous(), "grad_output tensor has to be contiguous");
++
++    AT_ASSERTM(value.type().is_cuda(), "value must be a CUDA tensor");
++    AT_ASSERTM(spatial_shapes.type().is_cuda(), "spatial_shapes must be a CUDA tensor");
++    AT_ASSERTM(level_start_index.type().is_cuda(), "level_start_index must be a CUDA tensor");
++    AT_ASSERTM(sampling_loc.type().is_cuda(), "sampling_loc must be a CUDA tensor");
++    AT_ASSERTM(attn_weight.type().is_cuda(), "attn_weight must be a CUDA tensor");
++    AT_ASSERTM(grad_output.type().is_cuda(), "grad_output must be a CUDA tensor");
++
++    const int batch = value.size(0);
++    const int spatial_size = value.size(1);
++    const int num_heads = value.size(2);
++    const int channels = value.size(3);
++
++    const int num_levels = spatial_shapes.size(0);
++
++    const int num_query = sampling_loc.size(1);
++    const int num_point = sampling_loc.size(4);
++
++    const int im2col_step_ = std::min(batch, im2col_step);
++
++    AT_ASSERTM(batch % im2col_step_ == 0, "batch(%d) must divide im2col_step(%d)", batch, im2col_step_);
++
++    auto grad_value = at::zeros_like(value);
++    auto grad_sampling_loc = at::zeros_like(sampling_loc);
++    auto grad_attn_weight = at::zeros_like(attn_weight);
++
++    const int batch_n = im2col_step_;
++    auto per_value_size = spatial_size * num_heads * channels;
++    auto per_sample_loc_size = num_query * num_heads * num_levels * num_point * 2;
++    auto per_attn_weight_size = num_query * num_heads * num_levels * num_point;
++    auto grad_output_n = grad_output.view({batch/im2col_step_, batch_n, num_query, num_heads, channels});
++    
++    for (int n = 0; n < batch/im2col_step_; ++n)
++    {
++        auto grad_output_g = grad_output_n.select(0, n);
++        AT_DISPATCH_FLOATING_TYPES(value.type(), "ms_deform_attn_backward_cuda", ([&] {
++            ms_deformable_col2im_cuda(at::cuda::getCurrentCUDAStream(),
++                                    grad_output_g.data<scalar_t>(),
++                                    value.data<scalar_t>() + n * im2col_step_ * per_value_size,
++                                    spatial_shapes.data<int64_t>(),
++                                    level_start_index.data<int64_t>(),
++                                    sampling_loc.data<scalar_t>() + n * im2col_step_ * per_sample_loc_size,
++                                    attn_weight.data<scalar_t>() + n * im2col_step_ * per_attn_weight_size,
++                                    batch_n, spatial_size, num_heads, channels, num_levels, num_query, num_point,
++                                    grad_value.data<scalar_t>() +  n * im2col_step_ * per_value_size,
++                                    grad_sampling_loc.data<scalar_t>() + n * im2col_step_ * per_sample_loc_size,
++                                    grad_attn_weight.data<scalar_t>() + n * im2col_step_ * per_attn_weight_size);
++
++        }));
++    }
++
++    return {
++        grad_value, grad_sampling_loc, grad_attn_weight
++    };
++}
+\ No newline at end of file
+diff --git a/util/slconfig.py b/util/slconfig.py
+index 8064727..0518115 100644
+--- a/util/slconfig.py
++++ b/util/slconfig.py
+@@ -314,7 +314,7 @@ class SLConfig(object):
+             based_on_style='pep8',
+             blank_line_before_nested_class_or_def=True,
+             split_before_expression_after_opening_paren=True)
+-        text, _ = FormatCode(text, style_config=yapf_style, verify=True)
++        text, _ = FormatCode(text, style_config=yapf_style)
+ 
+         return text
+     
+diff --git a/util/slconfig.py.orig b/util/slconfig.py.orig
+new file mode 100644
+index 0000000..8064727
+--- /dev/null
++++ b/util/slconfig.py.orig
+@@ -0,0 +1,440 @@
++# ==========================================================
++# Modified from mmcv
++# ==========================================================
++import os, sys
++import os.path as osp
++import ast
++import tempfile
++import shutil
++from importlib import import_module
++
++from argparse import Action
++
++from addict import Dict
++from yapf.yapflib.yapf_api import FormatCode
++
++import platform
++MACOS, LINUX, WINDOWS = (platform.system() == x for x in ['Darwin', 'Linux', 'Windows'])  # environment booleans
++
++BASE_KEY = '_base_'
++DELETE_KEY = '_delete_'
++RESERVED_KEYS = ['filename', 'text', 'pretty_text', 'get', 'dump', 'merge_from_dict']
++
++
++def check_file_exist(filename, msg_tmpl='file "{}" does not exist'):
++    if not osp.isfile(filename):
++        raise FileNotFoundError(msg_tmpl.format(filename))
++
++class ConfigDict(Dict):
++
++    def __missing__(self, name):
++        raise KeyError(name)
++
++    def __getattr__(self, name):
++        try:
++            value = super(ConfigDict, self).__getattr__(name)
++        except KeyError:
++            ex = AttributeError(f"'{self.__class__.__name__}' object has no "
++                                f"attribute '{name}'")
++        except Exception as e:
++            ex = e
++        else:
++            return value
++        raise ex
++
++
++class SLConfig(object):
++    """
++    config files.
++    only support .py file as config now.
++
++    ref: mmcv.utils.config
++
++    Example:
++        >>> cfg = Config(dict(a=1, b=dict(b1=[0, 1])))
++        >>> cfg.a
++        1
++        >>> cfg.b
++        {'b1': [0, 1]}
++        >>> cfg.b.b1
++        [0, 1]
++        >>> cfg = Config.fromfile('tests/data/config/a.py')
++        >>> cfg.filename
++        "/home/kchen/projects/mmcv/tests/data/config/a.py"
++        >>> cfg.item4
++        'test'
++        >>> cfg
++        "Config [path: /home/kchen/projects/mmcv/tests/data/config/a.py]: "
++        "{'item1': [1, 2], 'item2': {'a': 0}, 'item3': True, 'item4': 'test'}"
++    """
++    @staticmethod
++    def _validate_py_syntax(filename):
++        with open(filename) as f:
++            content = f.read()
++        try:
++            ast.parse(content)
++        except SyntaxError:
++            raise SyntaxError('There are syntax errors in config '
++                              f'file {filename}')
++
++    @staticmethod
++    def _file2dict(filename):
++        filename = osp.abspath(osp.expanduser(filename))
++        check_file_exist(filename)
++        if filename.lower().endswith('.py'):
++            with tempfile.TemporaryDirectory() as temp_config_dir:
++                temp_config_file = tempfile.NamedTemporaryFile(
++                    dir=temp_config_dir, suffix='.py')
++                temp_config_name = osp.basename(temp_config_file.name)
++                if WINDOWS:
++                    temp_config_file.close()
++                shutil.copyfile(filename,
++                                osp.join(temp_config_dir, temp_config_name))
++                temp_module_name = osp.splitext(temp_config_name)[0]
++                sys.path.insert(0, temp_config_dir)
++                SLConfig._validate_py_syntax(filename)
++                mod = import_module(temp_module_name)
++                sys.path.pop(0)
++                cfg_dict = {
++                    name: value
++                    for name, value in mod.__dict__.items()
++                    if not name.startswith('__')
++                }
++                # delete imported module
++                del sys.modules[temp_module_name]
++                # close temp file
++                temp_config_file.close()
++        elif filename.lower().endswith(('.yml', '.yaml', '.json')):
++            from .slio import slload
++            cfg_dict = slload(filename)
++        else:
++            raise IOError('Only py/yml/yaml/json type are supported now!')
++
++        cfg_text = filename + '\n'
++        with open(filename, 'r') as f:
++            cfg_text += f.read()
++
++        # parse the base file
++        if BASE_KEY in cfg_dict:
++            cfg_dir = osp.dirname(filename)
++            base_filename = cfg_dict.pop(BASE_KEY)
++            base_filename = base_filename if isinstance(
++                base_filename, list) else [base_filename]
++
++            cfg_dict_list = list()
++            cfg_text_list = list()
++            for f in base_filename:
++                _cfg_dict, _cfg_text = SLConfig._file2dict(osp.join(cfg_dir, f))
++                cfg_dict_list.append(_cfg_dict)
++                cfg_text_list.append(_cfg_text)
++
++            base_cfg_dict = dict()
++            for c in cfg_dict_list:
++                if len(base_cfg_dict.keys() & c.keys()) > 0:
++                    raise KeyError('Duplicate key is not allowed among bases')
++                    # TODO Allow the duplicate key while warnning user
++                base_cfg_dict.update(c)
++
++            base_cfg_dict = SLConfig._merge_a_into_b(cfg_dict, base_cfg_dict)
++            cfg_dict = base_cfg_dict
++
++            # merge cfg_text
++            cfg_text_list.append(cfg_text)
++            cfg_text = '\n'.join(cfg_text_list)
++
++        return cfg_dict, cfg_text
++
++    @staticmethod
++    def _merge_a_into_b(a, b):
++        """merge dict `a` into dict `b` (non-inplace).
++            values in `a` will overwrite `b`.
++            copy first to avoid inplace modification
++            
++        Args:
++            a ([type]): [description]
++            b ([type]): [description]
++
++        Returns:
++            [dict]: [description]
++        """
++
++        if not isinstance(a, dict):
++            return a
++
++        b = b.copy()
++        for k, v in a.items():
++            if isinstance(v, dict) and k in b and not v.pop(DELETE_KEY, False):
++            
++                if not isinstance(b[k], dict) and not isinstance(b[k], list):
++                    # if :
++
++                    raise TypeError(
++                        f'{k}={v} in child config cannot inherit from base '
++                        f'because {k} is a dict in the child config but is of '
++                        f'type {type(b[k])} in base config. You may set '
++                        f'`{DELETE_KEY}=True` to ignore the base config')
++                b[k] = SLConfig._merge_a_into_b(v, b[k])
++            elif isinstance(b, list):
++                try:
++                    _ = int(k)
++                except:
++                    raise TypeError(
++                        f'b is a list, '
++                        f'index {k} should be an int when input but {type(k)}'
++                    )
++                b[int(k)] = SLConfig._merge_a_into_b(v, b[int(k)])
++            else:   
++                b[k] = v
++                
++        return b
++
++    @staticmethod
++    def fromfile(filename):
++        cfg_dict, cfg_text = SLConfig._file2dict(filename)
++        return SLConfig(cfg_dict, cfg_text=cfg_text, filename=filename)
++
++
++    def __init__(self, cfg_dict=None, cfg_text=None, filename=None):
++        if cfg_dict is None:
++            cfg_dict = dict()
++        elif not isinstance(cfg_dict, dict):
++            raise TypeError('cfg_dict must be a dict, but '
++                            f'got {type(cfg_dict)}')
++        for key in cfg_dict:
++            if key in RESERVED_KEYS:
++                raise KeyError(f'{key} is reserved for config file')
++
++        super(SLConfig, self).__setattr__('_cfg_dict', ConfigDict(cfg_dict))
++        super(SLConfig, self).__setattr__('_filename', filename)
++        if cfg_text:
++            text = cfg_text
++        elif filename:
++            with open(filename, 'r') as f:
++                text = f.read()
++        else:
++            text = ''
++        super(SLConfig, self).__setattr__('_text', text)
++
++
++    @property
++    def filename(self):
++        return self._filename
++
++    @property
++    def text(self):
++        return self._text
++
++    @property
++    def pretty_text(self):
++
++        indent = 4
++
++        def _indent(s_, num_spaces):
++            s = s_.split('\n')
++            if len(s) == 1:
++                return s_
++            first = s.pop(0)
++            s = [(num_spaces * ' ') + line for line in s]
++            s = '\n'.join(s)
++            s = first + '\n' + s
++            return s
++
++        def _format_basic_types(k, v, use_mapping=False):
++            if isinstance(v, str):
++                v_str = f"'{v}'"
++            else:
++                v_str = str(v)
++
++            if use_mapping:
++                k_str = f"'{k}'" if isinstance(k, str) else str(k)
++                attr_str = f'{k_str}: {v_str}'
++            else:
++                attr_str = f'{str(k)}={v_str}'
++            attr_str = _indent(attr_str, indent)
++
++            return attr_str
++
++        def _format_list(k, v, use_mapping=False):
++            # check if all items in the list are dict
++            if all(isinstance(_, dict) for _ in v):
++                v_str = '[\n'
++                v_str += '\n'.join(
++                    f'dict({_indent(_format_dict(v_), indent)}),'
++                    for v_ in v).rstrip(',')
++                if use_mapping:
++                    k_str = f"'{k}'" if isinstance(k, str) else str(k)
++                    attr_str = f'{k_str}: {v_str}'
++                else:
++                    attr_str = f'{str(k)}={v_str}'
++                attr_str = _indent(attr_str, indent) + ']'
++            else:
++                attr_str = _format_basic_types(k, v, use_mapping)
++            return attr_str
++
++        def _contain_invalid_identifier(dict_str):
++            contain_invalid_identifier = False
++            for key_name in dict_str:
++                contain_invalid_identifier |= \
++                    (not str(key_name).isidentifier())
++            return contain_invalid_identifier
++
++        def _format_dict(input_dict, outest_level=False):
++            r = ''
++            s = []
++
++            use_mapping = _contain_invalid_identifier(input_dict)
++            if use_mapping:
++                r += '{'
++            for idx, (k, v) in enumerate(input_dict.items()):
++                is_last = idx >= len(input_dict) - 1
++                end = '' if outest_level or is_last else ','
++                if isinstance(v, dict):
++                    v_str = '\n' + _format_dict(v)
++                    if use_mapping:
++                        k_str = f"'{k}'" if isinstance(k, str) else str(k)
++                        attr_str = f'{k_str}: dict({v_str}'
++                    else:
++                        attr_str = f'{str(k)}=dict({v_str}'
++                    attr_str = _indent(attr_str, indent) + ')' + end
++                elif isinstance(v, list):
++                    attr_str = _format_list(k, v, use_mapping) + end
++                else:
++                    attr_str = _format_basic_types(k, v, use_mapping) + end
++
++                s.append(attr_str)
++            r += '\n'.join(s)
++            if use_mapping:
++                r += '}'
++            return r
++
++        cfg_dict = self._cfg_dict.to_dict()
++        text = _format_dict(cfg_dict, outest_level=True)
++        # copied from setup.cfg
++        yapf_style = dict(
++            based_on_style='pep8',
++            blank_line_before_nested_class_or_def=True,
++            split_before_expression_after_opening_paren=True)
++        text, _ = FormatCode(text, style_config=yapf_style, verify=True)
++
++        return text
++    
++
++    def __repr__(self):
++        return f'Config (path: {self.filename}): {self._cfg_dict.__repr__()}'
++
++    def __len__(self):
++        return len(self._cfg_dict)
++
++    def __getattr__(self, name):
++        # # debug
++        # print('+'*15)
++        # print('name=%s' % name)
++        # print("addr:", id(self))
++        # # print('type(self):', type(self))
++        # print(self.__dict__)
++        # print('+'*15)
++        # if self.__dict__ == {}:
++        #     raise ValueError
++
++        return getattr(self._cfg_dict, name)
++
++    def __getitem__(self, name):
++        return self._cfg_dict.__getitem__(name)
++
++    def __setattr__(self, name, value):
++        if isinstance(value, dict):
++            value = ConfigDict(value)
++        self._cfg_dict.__setattr__(name, value)
++
++    def __setitem__(self, name, value):
++        if isinstance(value, dict):
++            value = ConfigDict(value)
++        self._cfg_dict.__setitem__(name, value)
++
++    def __iter__(self):
++        return iter(self._cfg_dict)
++
++    def dump(self, file=None):
++
++        if file is None:
++            return self.pretty_text
++        else:
++            with open(file, 'w') as f:
++                f.write(self.pretty_text)
++
++    def merge_from_dict(self, options):
++        """Merge list into cfg_dict
++
++        Merge the dict parsed by MultipleKVAction into this cfg.
++
++        Examples:
++            >>> options = {'model.backbone.depth': 50,
++            ...            'model.backbone.with_cp':True}
++            >>> cfg = Config(dict(model=dict(backbone=dict(type='ResNet'))))
++            >>> cfg.merge_from_dict(options)
++            >>> cfg_dict = super(Config, self).__getattribute__('_cfg_dict')
++            >>> assert cfg_dict == dict(
++            ...     model=dict(backbone=dict(depth=50, with_cp=True)))
++
++        Args:
++            options (dict): dict of configs to merge from.
++        """
++        option_cfg_dict = {}
++        for full_key, v in options.items():
++            d = option_cfg_dict
++            key_list = full_key.split('.')
++            for subkey in key_list[:-1]:
++                d.setdefault(subkey, ConfigDict())
++                d = d[subkey]
++            subkey = key_list[-1]
++            d[subkey] = v
++
++        cfg_dict = super(SLConfig, self).__getattribute__('_cfg_dict')
++        super(SLConfig, self).__setattr__(
++            '_cfg_dict', SLConfig._merge_a_into_b(option_cfg_dict, cfg_dict))
++
++    # for multiprocess
++    def __setstate__(self, state):
++        self.__init__(state)
++
++
++    def copy(self):
++        return SLConfig(self._cfg_dict.copy())
++
++    def deepcopy(self):
++        return SLConfig(self._cfg_dict.deepcopy())
++
++
++class DictAction(Action):
++    """
++    argparse action to split an argument into KEY=VALUE form
++    on the first = and append to a dictionary. List options should
++    be passed as comma separated values, i.e KEY=V1,V2,V3
++    """
++
++    @staticmethod
++    def _parse_int_float_bool(val):
++        try:
++            return int(val)
++        except ValueError:
++            pass
++        try:
++            return float(val)
++        except ValueError:
++            pass
++        if val.lower() in ['true', 'false']:
++            return True if val.lower() == 'true' else False
++        if val.lower() in ['none', 'null']:
++            return None
++        return val
++
++    def __call__(self, parser, namespace, values, option_string=None):
++        options = {}
++        for kv in values:
++            key, val = kv.split('=', maxsplit=1)
++            val = [self._parse_int_float_bool(v) for v in val.split(',')]
++            if len(val) == 1:
++                val = val[0]
++            options[key] = val
++        setattr(namespace, self.dest, options)
++

@@ -44,6 +44,10 @@ def main(argv: Optional[List[str]] = None) -> None:
     ap.add_argument("--device", default="cuda")
     ap.add_argument("--options", nargs="*", default=[],
                     help="key=value overrides passed to the DINO config")
+    ap.add_argument("--clahe", action="store_true",
+                    help="apply CLAHE before the transform -- REQUIRED when "
+                         "scoring a model trained with lt_clahe, so inference "
+                         "sees the same preprocessing as training")
     args = ap.parse_args(argv)
 
     sys.path.insert(0, os.path.abspath(args.dino_root))
@@ -91,6 +95,9 @@ def main(argv: Optional[List[str]] = None) -> None:
         T.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225]),
     ])
 
+    if args.clahe:
+        import cv2 as _cv2
+        _clahe_op = _cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
     records, n_missing = [], 0
     import time
     t0 = time.time()
@@ -100,6 +107,11 @@ def main(argv: Optional[List[str]] = None) -> None:
             n_missing += 1
             continue
         image = Image.open(path).convert("RGB")
+        if args.clahe:
+            import numpy as _np, cv2 as _cv2
+            _lab = _cv2.cvtColor(_np.asarray(image), _cv2.COLOR_RGB2LAB)
+            _lab[..., 0] = _clahe_op.apply(_lab[..., 0])
+            image = Image.fromarray(_cv2.cvtColor(_lab, _cv2.COLOR_LAB2RGB))
         tensor, _ = transform(image, None)
         with torch.no_grad():
             out = model(tensor[None].to(args.device))
