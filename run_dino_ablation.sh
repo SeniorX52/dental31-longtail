@@ -55,6 +55,7 @@ run_arm() {
         --pretrain_model_path "$ROOT/weights/checkpoint0033_4scale.pth" \
         --finetune_ignore class_embed label_enc \
         --amp --seed 42 $resume \
+        --eval_every "${EVAL_EVERY:-4}" \
         --options $BASE_OPTS $opts 2>&1 | tail -12 )
     [ -f "$ckpt" ] || { echo "[$(stamp)] $name: no checkpoint produced"; return 0; }
   fi
