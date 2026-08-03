@@ -10,6 +10,15 @@
 cd "$HOME/Documents/ML_SOTA" || exit 0
 log() { echo "[$(date '+%F %T')] $*" >> logs/watchdog.log; }
 
+# NIGHT WINDOW: only START new work between 21:00 and 08:00 (owner uses the
+# machine during the day). Work already running is never touched, so an arm
+# that begins at night simply finishes. Override anytime with:
+#     bash watchdog.sh force
+if [ "$1" != "force" ]; then
+  H=$(date +%H)
+  if [ "$H" -ge 8 ] && [ "$H" -lt 21 ]; then exit 0; fi
+fi
+
 # anything already running (or queued and waiting)? leave it alone
 pgrep -f "train_seg.py|predict_to_coco|coco_eval_report|main.py --output_dir|export_dino_preds" >/dev/null && exit 0
 pgrep -f "run_seg_ablation|final_seg_run|run_dino_ablation|final_dino_run" >/dev/null && exit 0
