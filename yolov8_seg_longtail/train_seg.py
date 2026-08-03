@@ -187,6 +187,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                     help="0 disables the boundary Dice term")
     ap.add_argument("--name", default="longtail_seg")
     ap.add_argument("--device", default=None)
+    ap.add_argument("--resume", default=None, metavar="LAST_PT",
+                    help="resume an interrupted run from its last.pt. Restores "
+                         "optimizer state and epoch counter; continues in the "
+                         "original run directory to the original epoch target. "
+                         "Class weights / boundary term are re-attached by the "
+                         "trainer, so the criterion is identical after resume.")
     # Accuracy-neutral throughput settings, verified by tools/bench_train_speed.py.
     # They must be identical across every compared run, so the ablation queue
     # passes the same set to all arms.
@@ -214,6 +220,11 @@ def main(argv: Optional[List[str]] = None) -> None:
     overrides = dict(model=args.model, data=args.data, epochs=args.epochs,
                      imgsz=args.imgsz, batch=args.batch, seed=args.seed,
                      deterministic=True, name=args.name)
+    if args.resume:
+        # ultralytics restores the interrupted run's own args from the
+        # checkpoint; model must point at the last.pt being resumed.
+        overrides["model"] = args.resume
+        overrides["resume"] = True
     if args.device is not None:
         overrides["device"] = args.device
     if args.cache:
