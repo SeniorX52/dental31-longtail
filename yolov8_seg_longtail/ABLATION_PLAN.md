@@ -68,12 +68,40 @@ against a half-schedule baseline is what keeps it honest.
 | S1a | β=0.9 | – | – | weighting strength |
 | S1b | β=0.99 | – | – | weighting strength |
 | S1c | inv-sqrt | – | – | alternative weighting |
-| S2 | best of S1 | x | – | isolates the boundary term |
-| S3 | best of S1 | – | x | isolates copy-paste |
-| S4 | best of S1 | x | x | combined |
+| S2 | inv-sqrt | x | – | complete method minus copy-paste |
+| S3 | inv-sqrt | – | x | complete method minus boundary |
+| S4 | inv-sqrt | x | x | complete method |
 
-Final: S4 (or whichever wins) at 100 epochs, 3 seeds, versus the 100-epoch
-baseline, reported on test.
+### Correction: this grid is cumulative, and the completion arms fix it
+
+As originally written, every arm carrying the boundary term also carried
+inverse-sqrt weighting. `S2 − S0` therefore measures **weighting plus
+boundary**, not the boundary term, and the row above previously described it as
+"isolates the boundary term", which it does not.
+
+Two consequences, both recorded rather than quietly corrected:
+
+- The valid isolation of the boundary term among these arms is **`S2 − S1c`**,
+  where both carry inverse-sqrt weighting and only `boundary_weight` differs.
+  Recomputed on that contrast the boundary effect is AP75 **+0.70 pp /
+  +10.7 %** and head AP **+0.85 pp / +3.0 %**. The AP75 figure is unchanged from
+  the cumulative contrast; the head figure was overstated at +3.7 % and is
+  **+3.0 %** correctly isolated.
+- The grid has no "baseline plus boundary alone" cell at all. That cell (`SB`),
+  together with copy-paste alone (`SCP`) and complete-minus-weighting (`SNW`),
+  is added by `run_seg_completion.sh`, which also adds published comparators and
+  a second backbone.
+
+| run | weighting | boundary | copy-paste | purpose |
+|---|---|---|---|---|
+| SB | – | x | – | **boundary alone** on the plain baseline |
+| SCP | – | – | x | copy-paste alone |
+| SNW | – | x | x | complete method minus weighting |
+
+Final: the pre-registered configuration at 100 epochs versus the 100-epoch
+baseline, reported on test. Final runs are **single-seed**; seed replicates are
+run at the 50-epoch ablation budget on the `S1c`/`S2` pair, which is the
+contrast the boundary claim rests on.
 
 ## Reporting
 

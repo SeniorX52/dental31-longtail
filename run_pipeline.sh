@@ -39,7 +39,7 @@ fi
 # Translate the verified winners into ultralytics flags. Only configs that were
 # BOTH faster and loss-equivalent are adopted; 'nondet' is deliberately excluded
 # even if it wins, because it trades the bit-exact reproducibility the protocol
-# promises the client.
+# the reproducibility guarantee rests on.
 SPEED_ARGS=$(python - <<'PY'
 import json, os
 p = "reports/speed_bench.json"

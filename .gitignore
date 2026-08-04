@@ -60,3 +60,6 @@ venv/
 
 # Plain-language internal overview -- not part of the deliverable repo
 PROJECT_OVERVIEW.md
+
+# Runtime pause switch for watchdog.sh -- machine state, not source
+PAUSE

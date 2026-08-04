@@ -38,6 +38,8 @@ import torch.nn.functional as F
 
 from ultralytics.models.yolo.segment.train import SegmentationTrainer
 from ultralytics.nn.tasks import SegmentationModel
+
+from yolov8_seg_longtail import comparator_losses
 from ultralytics.utils import RANK
 from ultralytics.utils.loss import v8SegmentationLoss
 from ultralytics.utils.ops import crop_mask
@@ -111,29 +113,49 @@ def soft_boundary(x: torch.Tensor, band: int = 3) -> torch.Tensor:
 
 
 class BoundaryAwareSegLoss(v8SegmentationLoss):
-    """v8SegmentationLoss whose per-instance mask loss adds a boundary Dice term.
+    """v8SegmentationLoss with a selectable auxiliary term on the mask loss.
 
-    Reads `model.boundary_weight` (float, 0 disables). The parent class reads
-    `model.class_weights` for the cls loss on its own.
+    Reads `model.boundary_weight` (float, 0 disables) and `model.mask_aux`
+    (which auxiliary loss to add; default 'band', our objective). The parent
+    class reads `model.class_weights` for the cls loss on its own.
+
+    The auxiliary slot exists so the proposed objective can be measured against
+    the losses people already publish -- soft Dice, Tversky, Focal Tversky, and
+    Kervadec's boundary loss -- with the BCE base, the crop, the normalisation
+    and the schedule held identical, so the auxiliary term is the only thing
+    that differs between arms. See `comparator_losses.py`.
     """
 
     def __init__(self, model, tal_topk: int = 10, tal_topk2=None):
         super().__init__(model, tal_topk, tal_topk2)
         self.boundary_weight = float(getattr(model, "boundary_weight", 0.0))
+        self.mask_aux = str(getattr(model, "mask_aux", "band") or "band")
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)
         bce = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         loss = (crop_mask(bce, xyxy).mean(dim=(1, 2)) / area).sum()
-        if self.boundary_weight > 0:
-            pb = soft_boundary(pred_mask.sigmoid())
-            gb = soft_boundary(gt_mask)
-            pb = crop_mask(pb, xyxy)
-            gb = crop_mask(gb, xyxy)
-            inter = (pb * gb).sum(dim=(1, 2))
-            denom = pb.sum(dim=(1, 2)) + gb.sum(dim=(1, 2))
-            bdice = 1.0 - (2 * inter + 1.0) / (denom + 1.0)
-            loss = loss + self.boundary_weight * bdice.sum()
+        if self.boundary_weight > 0 and self.mask_aux != "none":
+            p = pred_mask.sigmoid()
+            if self.mask_aux == "band":
+                # Left exactly as originally written -- morphology on the FULL
+                # map, then crop -- so every arm trained before this refactor
+                # still reproduces bit-for-bit. Cropping first would let the
+                # crop edge register as contour and change the numbers.
+                pb = crop_mask(soft_boundary(p), xyxy)
+                gb = crop_mask(soft_boundary(gt_mask), xyxy)
+                inter = (pb * gb).sum(dim=(1, 2))
+                denom = pb.sum(dim=(1, 2)) + gb.sum(dim=(1, 2))
+                aux = 1.0 - (2 * inter + 1.0) / (denom + 1.0)
+            elif self.mask_aux == "kervadec":
+                # the distance map is a property of the ground truth, so it is
+                # built on the full map for the same reason, then cropped
+                phi = crop_mask(comparator_losses.signed_distance(gt_mask), xyxy)
+                aux = (phi * crop_mask(p, xyxy)).mean(dim=(1, 2))
+            else:
+                fn = comparator_losses.get_aux_loss(self.mask_aux)
+                aux = fn(crop_mask(p, xyxy), crop_mask(gt_mask, xyxy))
+            loss = loss + self.boundary_weight * aux.sum()
         return loss
 
 
@@ -148,10 +170,12 @@ class LongTailSegTrainer(SegmentationTrainer):
 
     def __init__(self, overrides=None, _callbacks=None,
                  class_weights: Optional[torch.Tensor] = None,
-                 boundary_weight: float = 0.0):
+                 boundary_weight: float = 0.0,
+                 mask_aux: str = "band"):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
         self._lt_boundary_weight = boundary_weight
+        self._lt_mask_aux = mask_aux
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         model = self.set_model_names_for_load(
@@ -163,6 +187,7 @@ class LongTailSegTrainer(SegmentationTrainer):
         if self._lt_class_weights is not None:
             model.class_weights = self._lt_class_weights
         model.boundary_weight = self._lt_boundary_weight
+        model.mask_aux = self._lt_mask_aux
         return model
 
 
@@ -193,6 +218,14 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "original run directory to the original epoch target. "
                          "Class weights / boundary term are re-attached by the "
                          "trainer, so the criterion is identical after resume.")
+    ap.add_argument("--mask-aux", default="band",
+                    choices=["none", "band", "dice", "tversky",
+                             "focal_tversky", "kervadec"],
+                    help="which auxiliary term the mask loss adds on top of "
+                         "BCE, scaled by --boundary-weight. 'band' is our "
+                         "objective; the rest are published comparators so the "
+                         "proposed loss is measured against the losses people "
+                         "already use, not only against stock BCE.")
     # Accuracy-neutral throughput settings, verified by tools/bench_train_speed.py.
     # They must be identical across every compared run, so the ablation queue
     # passes the same set to all arms.
@@ -238,9 +271,12 @@ def main(argv: Optional[List[str]] = None) -> None:
         overrides["workers"] = args.workers
     print("throughput overrides:", {k: overrides[k] for k in
           ("cache", "channels_last", "compile", "workers") if k in overrides})
+    print("mask auxiliary term:", comparator_losses.describe(args.mask_aux),
+          "(weight %.3f)" % args.boundary_weight)
     trainer = LongTailSegTrainer(overrides=overrides,
                                  class_weights=weights,
-                                 boundary_weight=args.boundary_weight)
+                                 boundary_weight=args.boundary_weight,
+                                 mask_aux=args.mask_aux)
     trainer.train()
 
 
