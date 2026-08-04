@@ -72,12 +72,22 @@ gpu_busy() {
 # pick the run directory with the most completed epochs (ultralytics appends
 # "-2", "-3" when a directory already exists, and the newest is often an
 # abandoned partial rather than the finished run)
+# Progress is the LAST EPOCH NUMBER in results.csv, not the row count -- see the
+# same note in final_seg_run.sh. A run repaired after a crash can be one row
+# short of the epoch it reaches, and counting rows would make the completion
+# guard reject a finished run. Identical for an uninterrupted run.
+run_epoch() {
+  [ -f "$1/results.csv" ] || { echo 0; return; }
+  awk -F, 'NR==1{for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if($i=="epoch") c=i} next}
+           c && $c+0>m {m=$c+0} END{printf "%d", m+0}' "$1/results.csv"
+}
+
 best_run() {
   local best="" bestn=-1 d n
   for d in runs/segment/${1} runs/segment/${1}-*; do
     [ -d "$d" ] || continue
-    n=$(( $(wc -l < "$d/results.csv" 2>/dev/null || echo 1) - 1 )); [ "$n" -lt 0 ] && n=0
-    if [ "$n" -gt "$bestn" ]; then bestn=$n; best="$d"; fi
+    n=$(run_epoch "$d"); [ "${n:-0}" -lt 0 ] && n=0
+    if [ "${n:-0}" -gt "$bestn" ]; then bestn=$n; best="$d"; fi
   done
   [ -n "$best" ] && printf '%s\t%s\n' "$bestn" "$best"
 }

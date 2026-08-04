@@ -83,12 +83,24 @@ echo "$CANDS" | grep '^#' || true
 CANDS=$(echo "$CANDS" | grep -v '^#')
 echo "candidates: $CANDS"
 
+# Progress is the LAST EPOCH NUMBER recorded in results.csv, not the row count.
+# A run repaired after a crash can be missing a row: the newest checkpoint we
+# could resume from was one epoch behind the csv, so the surplus rows were
+# trimmed to match it, leaving the file one row short of the epoch it goes on to
+# reach. Counting rows would then make the completion guard reject a run that
+# genuinely finished. For an uninterrupted run the two are identical.
+run_epoch() {
+  [ -f "$1/results.csv" ] || { echo 0; return; }
+  awk -F, 'NR==1{for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if($i=="epoch") c=i} next}
+           c && $c+0>m {m=$c+0} END{printf "%d", m+0}' "$1/results.csv"
+}
+
 best_run() {
   local best="" bestn=-1 d n
   for d in runs/*/${1} runs/*/${1}-*; do
     [ -d "$d" ] || continue
-    n=$(( $(wc -l < "$d/results.csv" 2>/dev/null || echo 1) - 1 )); [ "$n" -lt 0 ] && n=0
-    if [ "$n" -gt "$bestn" ]; then bestn=$n; best="$d"; fi
+    n=$(run_epoch "$d"); [ "${n:-0}" -lt 0 ] && n=0
+    if [ "${n:-0}" -gt "$bestn" ]; then bestn=$n; best="$d"; fi
   done
   [ -n "$best" ] && printf '%s\t%s\n' "$bestn" "$best"
 }
