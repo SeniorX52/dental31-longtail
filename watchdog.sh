@@ -44,9 +44,46 @@ if [ "$1" != "force" ]; then
   fi
 fi
 
-# anything already running (or queued and waiting)? leave it alone
-pgrep -f "train_seg.py|predict_to_coco|coco_eval_report|main.py --output_dir|export_dino_preds" >/dev/null && exit 0
-pgrep -f "run_seg_ablation|final_seg_run|run_dino_ablation|final_dino_run|run_seg_completion" >/dev/null && exit 0
+# Anything already running (or queued and waiting)? Leave it alone.
+#
+# Both checks used to be a bare `pgrep -f`, which matches full command lines and
+# therefore matches ANY process whose arguments merely mention a script name --
+# including a shell running a diagnostic command. That is a silent failure: the
+# watchdog decides work is in flight, exits, and the chain never advances. It
+# was observed doing exactly that. The queue scripts already filter by process
+# comm for this reason; the watchdog now does the same.
+
+# real workloads: python processes only
+workload_running() {
+  local p c
+  for p in $(pgrep -f "train_seg\.py|predict_to_coco|coco_eval_report|main\.py --output_dir|export_dino_preds" 2>/dev/null); do
+    c=$(ps -o comm= -p "$p" 2>/dev/null)
+    case "$c" in python*|pt_data*) return 0 ;; esac
+  done
+  return 1
+}
+
+# real queue drivers: a bash process whose script argument IS one of ours.
+# `bash -c '...'` shells are skipped -- they carry the name incidentally, in the
+# body of an inline command, not as the script being executed.
+driver_running() {
+  local p a
+  for p in $(pgrep -x bash 2>/dev/null); do
+    # guard the read: a process can exit between pgrep and here, and the shell
+    # reports a failed redirection on stderr even when the command is silenced
+    [ -r "/proc/$p/cmdline" ] || continue
+    a=$(tr '\0' ' ' < "/proc/$p/cmdline" 2>/dev/null) || continue
+    case "$a" in
+      *" -c "*) continue ;;
+      *run_seg_ablation*|*final_seg_run*|*run_dino_ablation*|*final_dino_run*|*run_seg_completion*)
+        return 0 ;;
+    esac
+  done
+  return 1
+}
+
+workload_running && exit 0
+driver_running   && exit 0
 
 if [ ! -f reports/ablation_S2_valid_segm.json ]; then
   log "stage 1 (seg ablation) down, relaunching"

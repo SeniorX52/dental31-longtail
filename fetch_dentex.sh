@@ -23,6 +23,18 @@ if [ ! -d "$(dirname "$DEST")" ]; then
   echo "SSD not mounted at $(dirname "$DEST") -- connect it or set DENTEX_DIR" >&2
   exit 1
 fi
+# Do not run while a training job owns the machine. This download competes for
+# page cache, and with cache=ram training already holding most of RAM the extra
+# pressure is enough to push the box into swap exhaustion -- which is exactly
+# how a 100-epoch run died at epoch 35 with a truncated checkpoint.
+for p in $(pgrep -f "train_seg\.py|main\.py --output_dir" 2>/dev/null); do
+  case "$(ps -o comm= -p "$p" 2>/dev/null)" in
+    python*)
+      echo "a training job is running -- refusing to add I/O load. Rerun when idle." >&2
+      exit 0 ;;
+  esac
+done
+
 mkdir -p "$DEST"
 cd "$DEST"
 

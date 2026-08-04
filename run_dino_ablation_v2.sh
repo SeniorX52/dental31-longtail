@@ -60,6 +60,7 @@ GT_VALID="$ROOT/data_clean/annotations/instances_valid.json"
 # intermediate one. All this suppresses is the per-epoch archive copies, taking
 # an arm from ~7.4 GB to ~1.7 GB.
 BASE_OPTS="num_classes=32 dn_labelbook_size=32 batch_size=2 epochs=12 lr_drop=11 save_checkpoint_interval=100"
+EPOCHS_TARGET=12          # must match epochs= above; used by the completion guard
 
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 step()  { echo; echo "=== [$(stamp)] $* ==="; }
@@ -117,7 +118,26 @@ run_arm() {
     [ -f "$ckpt" ] || { echo "[$(stamp)] $name: no checkpoint produced"; return 0; }
   fi
 
-  step "score $name on VALID"
+  # COMPLETION GUARD -- do not score an arm that did not finish its schedule.
+  #
+  # DINO rewrites checkpoint.pth every epoch, so an arm killed at epoch 2 still
+  # leaves a loadable checkpoint. Scoring it writes that arm's report, and a
+  # scored arm is skipped forever on relaunch -- so a two-epoch model silently
+  # becomes the permanent entry for that cell in the frozen matrix. This was
+  # caught happening to D2 after an out-of-memory kill.
+  #
+  # log.txt gains exactly one line per completed epoch, which is the cheapest
+  # honest completion signal available here.
+  local logf done_ep
+  logf="$(dirname "$ckpt")/log.txt"
+  done_ep=$(wc -l < "$logf" 2>/dev/null || echo 0)
+  if [ "${done_ep:-0}" -lt "$EPOCHS_TARGET" ]; then
+    echo "[$(stamp)] $name reached only ${done_ep:-0}/$EPOCHS_TARGET epochs -- REFUSING"
+    echo "            to score; relaunch to resume from checkpoint.pth."
+    return 0
+  fi
+
+  step "score $name on VALID  (verified ${done_ep}/$EPOCHS_TARGET epochs)"
   if ! python dino_longtail/export_dino_preds.py \
         --dino-root "$DINO" --config "$DINO/config/DINO/DINO_4scale.py" \
         --checkpoint "$ckpt" --coco-path "$ROOT/data_coco" --split val2017 \

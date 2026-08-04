@@ -5,9 +5,21 @@
 # "collaborator research copy, no public license granted" with pixel-level PHI
 # review still pending. It must not reach any remote under any circumstance.
 # ---------------------------------------------------------------------------
+# Bare names as well as trailing-slash forms: these paths may be directories on
+# one machine and symlinks to external storage on another, and a pattern ending
+# in "/" matches only directories, so the symlink would otherwise be untracked
+# and offered up for commit.
+data_raw
 data_raw/
 data_clean/
+data_clean_cp/
+data_coco/
+data_external/
 data/
+# Anything else that materialises the corpus. The copy-paste set was missed by
+# the explicit list above and reached the remote as a result, so match by prefix
+# rather than by enumeration.
+data_*/
 *.zip
 *.tar
 *.tar.gz

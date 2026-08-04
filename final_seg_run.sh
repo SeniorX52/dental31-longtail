@@ -131,11 +131,27 @@ for ARM in $CANDS; do
       --weights "$WS" --boundary-weight "$BW" --name "$NAME" 2>&1 | tail -15
   fi
 
-  info=$(best_run "$NAME"); dir=$(echo "$info" | cut -f2)
+  info=$(best_run "$NAME"); n=$(echo "$info" | cut -f1); dir=$(echo "$info" | cut -f2)
   W="$dir/weights/best.pt"
   [ -f "$W" ] || { echo "[$(stamp)] $ARM: no weights produced, skipping"; continue; }
 
-  step "ONE-TIME test evaluation for $ARM"
+  # COMPLETION GUARD -- do not score a run that did not finish.
+  #
+  # Without this, a training process that dies part-way leaves a valid best.pt
+  # behind, the script walks straight past the failure into the scoring step,
+  # and a partial model's numbers get written as THE final result. That is not
+  # hypothetical: an out-of-memory kill at epoch 35 left a 30-epoch best.pt,
+  # which was then scored on test and recorded as the 100-epoch final at
+  # mAP 0.1007 -- a below-baseline number that would have been reported as the
+  # project's headline result. The test split is touched once, so a wrong
+  # number here is expensive to notice and impossible to un-report.
+  if [ "${n:-0}" -lt 100 ]; then
+    echo "[$(stamp)] $ARM reached only ${n:-0}/100 epochs -- REFUSING to score an"
+    echo "            unfinished run. Fix the cause, then relaunch to resume."
+    continue
+  fi
+
+  step "ONE-TIME test evaluation for $ARM  (verified ${n}/100 epochs)"
   python yolov8_seg_longtail/predict_to_coco.py \
     --weights "$W" --gt data_clean/annotations/instances_test.json \
     --images data_clean/test/images --out "preds/final_${ARM}_test.json" \

@@ -115,11 +115,20 @@ run_arm() {
       --mask-aux "$aux" --name "$NAME" 2>&1 | tail -12
   fi
 
-  info=$(best_run "$NAME"); dir=$(echo "$info" | cut -f2)
+  info=$(best_run "$NAME"); n=$(echo "$info" | cut -f1); dir=$(echo "$info" | cut -f2)
   local W="$dir/weights/best.pt"
   [ -f "$W" ] || { echo "[$(stamp)] $tag: no weights produced, skipping"; return 0; }
 
-  step "score $tag on VALID"
+  # COMPLETION GUARD -- see final_seg_run.sh for why. A killed run leaves a
+  # usable best.pt, and scoring it writes a partial arm's numbers into the
+  # ablation table permanently, because a scored arm is skipped on relaunch.
+  if [ "${n:-0}" -lt "$EPOCHS" ]; then
+    echo "[$(stamp)] $tag reached only ${n:-0}/$EPOCHS epochs -- REFUSING to score;"
+    echo "            relaunch to resume rather than recording a partial arm."
+    return 0
+  fi
+
+  step "score $tag on VALID  (verified ${n}/$EPOCHS epochs)"
   python yolov8_seg_longtail/predict_to_coco.py \
     --weights "$W" --gt data_clean/annotations/instances_valid.json \
     --images data_clean/valid/images --out "preds/ablation_${tag}_valid.json" \
