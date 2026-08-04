@@ -29,6 +29,26 @@ BASE_OPTS="num_classes=32 dn_labelbook_size=32 batch_size=2 epochs=12 lr_drop=11
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 step()  { echo; echo "=== [$(stamp)] $* ==="; }
 
+# gpu_busy: true only when a REAL python training/eval process is alive, or the
+# GPU has a compute app attached.
+#
+# Why not plain `pgrep -f train_seg.py`: pgrep -f matches full command lines, so
+# ANY shell whose arguments merely mention those script names (a monitoring
+# command, a grep, this script's own launcher) counts as "busy". That made the
+# wait loop sleep another 300 s every time a diagnostic command happened to be
+# running, and it could stall indefinitely. Filtering by the process's comm
+# (python*) counts only genuine workloads.
+gpu_busy() {
+  local p c
+  for p in $(pgrep -f "train_seg\.py|main\.py --output_dir|predict_to_coco\.py|export_dino_preds\.py" 2>/dev/null); do
+    c=$(ps -o comm= -p "$p" 2>/dev/null)
+    case "$c" in python*) return 0 ;; esac
+  done
+  nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]' && return 0
+  return 1
+}
+
+
 # run_arm <name> <extra options...>   ("-" = none / score-only uses existing ckpt)
 run_arm() {
   local name="$1"; shift
@@ -76,8 +96,7 @@ run_arm() {
 }
 
 step "waiting for the segmentation pipeline / GPU"
-while pgrep -f "run_seg_ablation|final_seg_run|train_seg.py|predict_to_coco" >/dev/null 2>&1 \
-   || nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]'; do
+while gpu_busy; do
   sleep 300
 done
 sleep 20

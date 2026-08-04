@@ -1,4 +1,24 @@
 #!/usr/bin/env bash
+
+# gpu_busy: true only when a REAL python training/eval process is alive, or the
+# GPU has a compute app attached.
+#
+# Why not plain `pgrep -f train_seg.py`: pgrep -f matches full command lines, so
+# ANY shell whose arguments merely mention those script names (a monitoring
+# command, a grep, this script's own launcher) counts as "busy". That made the
+# wait loop sleep another 300 s every time a diagnostic command happened to be
+# running, and it could stall indefinitely. Filtering by the process's comm
+# (python*) counts only genuine workloads.
+gpu_busy() {
+  local p c
+  for p in $(pgrep -f "train_seg\.py|main\.py --output_dir|predict_to_coco\.py|export_dino_preds\.py" 2>/dev/null); do
+    c=$(ps -o comm= -p "$p" 2>/dev/null)
+    case "$c" in python*) return 0 ;; esac
+  done
+  nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]' && return 0
+  return 1
+}
+
 # Project-1 FINAL: pick the best detection arm from the VALID ablation table
 # and evaluate it ONCE on the held-out test split. No retraining -- every arm
 # is already a full 12-epoch (official 1x) run, identical budget to the
@@ -17,8 +37,7 @@ stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 [ -f reports/final_dino_test_bbox.json ] && { echo "final dino already scored"; exit 0; }
 
 echo "=== [$(stamp)] waiting for the DINO ablation / GPU ==="
-while pgrep -f "run_seg_ablation|final_seg_run|run_dino_ablation.sh|train_seg.py|main.py --output_dir|predict_to_coco|export_dino_preds" >/dev/null 2>&1 \
-   || nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]'; do
+while gpu_busy; do
   sleep 300
 done
 sleep 20

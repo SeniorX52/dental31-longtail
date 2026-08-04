@@ -15,6 +15,16 @@
 # If they are the same arm, only one run happens. Both are reported on test
 # against the 100-epoch baseline, and the write-up states plainly that the arms
 # were within noise on mAP. That is the honest version of "which change won".
+# NOTE on --channels-last: deliberately NOT used here. Two reasons.
+#  1. The 100-epoch baseline this run is compared against was trained with
+#     channels_last=False (weights/baseline_yolov8x_clean/provenance.json), so
+#     matching it keeps the method the ONLY difference between the two runs.
+#  2. ultralytics' auto-selected Muon optimizer calls u.view() on gradients,
+#     which requires contiguous memory and raises on NHWC tensors:
+#       muon.py:100 RuntimeError: view size is not compatible with input
+#       tensor's size and stride
+# --cache ram is kept: it only decides whether a JPEG is decoded once or every
+# epoch, and JPEG decoding is deterministic, so it cannot change the math.
 set -o pipefail
 
 ROOT="$HOME/Documents/ML_SOTA"
@@ -26,9 +36,28 @@ export PYTHONPATH="$ROOT:$PYTHONPATH"
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 step()  { echo; echo "=== [$(stamp)] $* ==="; }
 
+# gpu_busy: true only when a REAL python training/eval process is alive, or the
+# GPU has a compute app attached.
+#
+# Why not plain `pgrep -f train_seg.py`: pgrep -f matches full command lines, so
+# ANY shell whose arguments merely mention those script names (a monitoring
+# command, a grep, this script's own launcher) counts as "busy". That made the
+# wait loop sleep another 300 s every time a diagnostic command happened to be
+# running, and it could stall indefinitely. Filtering by the process's comm
+# (python*) counts only genuine workloads.
+gpu_busy() {
+  local p c
+  for p in $(pgrep -f "train_seg\.py|main\.py --output_dir|predict_to_coco\.py|export_dino_preds\.py" 2>/dev/null); do
+    c=$(ps -o comm= -p "$p" 2>/dev/null)
+    case "$c" in python*) return 0 ;; esac
+  done
+  nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]' && return 0
+  return 1
+}
+
+
 step "waiting for the GPU"
-while pgrep -f "train_seg.py|main.py --output_dir|predict_to_coco|export_dino_preds" >/dev/null 2>&1 \
-   || nvidia-smi --query-compute-apps=pid --format=csv,noheader 2>/dev/null | grep -q '[0-9]'; do
+while gpu_busy; do
   sleep 300
 done
 sleep 20
@@ -93,12 +122,12 @@ for ARM in $CANDS; do
   elif [ -n "$dir" ] && [ -f "$dir/weights/last.pt" ] && [ "${n:-0}" -ge 2 ]; then
     step "resuming $ARM from epoch $n"
     python yolov8_seg_longtail/train_seg.py --data "$DATA" --model yolov8x-seg.pt $TL \
-      --epochs 100 --imgsz 640 --batch 8 --seed 42 --cache ram --channels-last \
+      --epochs 100 --imgsz 640 --batch 8 --seed 42 --cache ram \
       --weights "$WS" --boundary-weight "$BW" \
       --resume "$dir/weights/last.pt" --name "$NAME" 2>&1 | tail -15
   else
     python yolov8_seg_longtail/train_seg.py --data "$DATA" --model yolov8x-seg.pt $TL \
-      --epochs 100 --imgsz 640 --batch 8 --seed 42 --cache ram --channels-last \
+      --epochs 100 --imgsz 640 --batch 8 --seed 42 --cache ram \
       --weights "$WS" --boundary-weight "$BW" --name "$NAME" 2>&1 | tail -15
   fi
 
