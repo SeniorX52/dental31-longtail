@@ -148,6 +148,77 @@ run_arm() {
     --train-json data_clean/annotations/instances_train.json \
     --iou-type segm --out "$report" 2>&1 | tail -4 \
     || echo "[$(stamp)] $tag: eval failed, continuing"
+  score_extras "$tag"
+}
+
+# COCO metrics alone are not enough to judge these arms, and computing the rest
+# by hand invites the mistake that has already been made once.
+#
+# HD95 and ASSD average over the cases where BOTH masks are non-empty, so their
+# denominator differs per model. On the first arm pair this made the boundary
+# term look 17-25 % better on distance; recomputed on the intersection of cases
+# it was significantly WORSE. Every arm therefore gets the paired comparison
+# against its own reference automatically, with coverage printed beside it, so
+# an arm cannot appear to win by predicting less.
+#
+# CONF is the operating point selected on VALIDATION using the BASELINE arm and
+# then frozen -- it is never re-tuned per arm.
+CONF=0.15
+ref_of() {
+  case "$1" in
+    SB)                       echo S0 ;;   # boundary alone vs the plain baseline
+    SCP)                      echo S0 ;;   # copy-paste alone vs the plain baseline
+    CMPdice|CMPkerv|CMPtver|CMPftver)
+                              echo SB ;;   # published loss vs ours, same slot
+    SNW)                      echo S4 ;;   # complete minus weighting vs complete
+    XBband)                   echo XBbase ;;
+    S2_s1337)                 echo S1c_s1337 ;;
+    S2_s2024)                 echo S1c_s2024 ;;
+    *)                        echo "" ;;
+  esac
+}
+
+score_extras() {
+  local tag="$1" ref dt rdt
+  dt="preds/ablation_${tag}_valid.json"
+  [ -f "$dt" ] || return 0
+
+  if [ ! -f "reports/contour_${tag}_valid.json" ]; then
+    step "contour metrics for $tag"
+    python eval/contour_metrics.py \
+      --gt data_clean/annotations/instances_valid.json --dt "$dt" \
+      --train-json data_clean/annotations/instances_train.json \
+      --conf "$CONF" --boot 200 --out "reports/contour_${tag}_valid" 2>&1 | tail -3 \
+      || echo "[$(stamp)] $tag: contour metrics failed, continuing"
+  fi
+
+  ref=$(ref_of "$tag")
+  [ -n "$ref" ] || return 0
+  rdt="preds/ablation_${ref}_valid.json"
+  if [ ! -f "$rdt" ]; then
+    echo "[$(stamp)] $tag: reference arm $ref not scored yet, paired comparison deferred"
+    return 0
+  fi
+
+  if [ ! -f "reports/paired_contour_${ref}_${tag}_valid.json" ]; then
+    step "paired contour $tag vs $ref  (same cases only)"
+    PYTHONPATH="$ROOT/eval:$PYTHONPATH" python eval/paired_contour.py \
+      --gt data_clean/annotations/instances_valid.json \
+      --dt-a "$rdt" --label-a "$ref" --dt-b "$dt" --label-b "$tag" \
+      --conf "$CONF" --boot 500 \
+      --out "reports/paired_contour_${ref}_${tag}_valid" 2>&1 | tail -8 \
+      || echo "[$(stamp)] $tag: paired contour failed, continuing"
+  fi
+
+  if [ ! -f "reports/bone_loss_${ref}_${tag}_valid.json" ]; then
+    step "clinical endpoint $tag vs $ref"
+    python eval/bone_loss_endpoint.py \
+      --gt data_clean/annotations/instances_valid.json \
+      --dt "$rdt" --label-a "$ref" --dt-b "$dt" --label-b "$tag" \
+      --conf "$CONF" --boot 2000 \
+      --out "reports/bone_loss_${ref}_${tag}_valid" 2>&1 | tail -4 \
+      || echo "[$(stamp)] $tag: clinical endpoint failed, continuing"
+  fi
 }
 
 step "waiting for the GPU"
