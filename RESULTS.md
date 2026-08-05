@@ -158,7 +158,69 @@ ordering failing to transfer to test.
 
 ---
 
-## 5. Contour metrics — where the boundary claim does not hold
+## 5. The mask representation is the binding constraint
+
+The results above are hard to interpret without knowing what the architecture is
+capable of. YOLOv8-seg does not predict a mask per pixel: it predicts 32
+coefficients per instance and reconstructs the mask as a linear combination of
+prototype maps produced at **input/4** — a 160×160 grid for a 640 input. Every
+mask is band-limited to that grid before being upsampled back.
+
+On this dataset the median annotated instance is ~24 px across at input
+resolution, which is **6 px on the prototype grid**. 68 % of instances are under
+8 px there and 26 % are under 4 px.
+
+`tools/mask_resolution_ceiling.py` measures the consequence without a model, by
+round-tripping every ground-truth mask through the prototype grid and scoring it
+against itself. This is the best any model could do with perfect coefficients
+and perfect prototypes:
+
+| prototype grid | scale | mean Dice | mean IoU | share that cannot reach IoU 0.75 |
+|---|---|---|---|---|
+| **160×160** | **input/4 (stock)** | **0.8963** | **0.8277** | **17.7 %** |
+| 320×320 | input/2 | 0.9492 | 0.9074 | 5.4 % |
+| 640×640 | input/1 | 0.9901 | 0.9813 | 0.5 % |
+
+20,601 instances scored.
+
+**At the stock resolution, 17.7 % of instances can never be matched at IoU 0.75,
+whatever the loss does.** AP75 is capped by the representation before training
+begins. The measured mask AP75 is 49 % of the box AP75 on the same model, while
+mask AP50 is 87 % of box AP50 — precisely the signature of a representation
+limit rather than a detection or classification failure.
+
+The ceiling falls hardest on the clinically important classes, because they are
+the small ones:
+
+| class | median side (px) | IoU ceiling | instances |
+|---|---|---|---|
+| **Root Canal Treatment** | 17.2 | **0.622** | 2878 |
+| **Caries** | 16.7 | **0.721** | 1615 |
+| post - core | 23.8 | 0.670 | 50 |
+| Periapical lesion | 21.7 | 0.823 | 799 |
+
+Caries and root canal treatment — 4493 instances between them — have ceilings
+**below the 0.75 threshold**, so they are structurally excluded from AP75 no
+matter how well the model learns.
+
+### Why this reframes sections 4 and 6
+
+A boundary-shaping objective refines contours. An instance that occupies 6 px on
+the prototype grid has almost no contour to refine: its morphological gradient
+is essentially the entire object. This is a sufficient explanation for the
+pattern already measured — a small AP-family movement, no change in the direct
+contour metrics, and no change in the clinical endpoint. The objective was
+aimed at a constraint that is not the binding one.
+
+It also identifies a larger and better-motivated intervention. Doubling the
+prototype grid to input/2 cuts the structurally impossible share from 17.7 % to
+5.4 %, a **3.3× reduction**, and lifts the achievable Dice ceiling from 0.896 to
+0.949. That is an architectural change targeting a measured bottleneck, rather
+than a loss change targeting an assumed one.
+
+---
+
+## 6. Contour metrics — where the boundary claim does not hold
 
 Region and contour metrics on the isolated contrast, validation, confidence cut
 0.15 (selected on the *baseline* arm so it cannot favour the method, then
@@ -209,7 +271,7 @@ this.
 
 ---
 
-## 6. Downstream clinical endpoint — bone-loss area error
+## 7. Downstream clinical endpoint — bone-loss area error
 
 A better contour metric is not itself evidence of clinical utility, so the
 quantity a clinician would read off the segmentation is measured directly.
@@ -251,7 +313,7 @@ this operating point, not of the loss being compared.
 
 ---
 
-## 7. Training schedule — every arm overtrains
+## 8. Training schedule — every arm overtrains
 
 Validation mask mAP50-95 from the trainer's own per-epoch metrics (a shape, not
 a number — the reportable figures come from the shared pycocotools scorer):
@@ -278,7 +340,7 @@ best-mAP arm lost at 100 epochs.
 
 ---
 
-## 8. Detection
+## 9. Detection
 
 | arm | split | mAP | AP50 | AP75 | head | tail |
 |---|---|---|---|---|---|---|
@@ -291,7 +353,7 @@ components and was discarded rather than reported.
 
 ---
 
-## 9. What is not claimed
+## 10. What is not claimed
 
 - **No long-tail improvement.** The evaluation split has no statistical power
   for it: 16 of 31 classes occur in fewer than 10 validation images and eleven
@@ -300,8 +362,8 @@ components and was discarded rather than reported.
 - **No improvement over the baseline on the held-out test split**, on the
   evidence in section 4. The single metric where the method leads is head-class
   AP.
-- **No improvement in contour fidelity**, on the direct evidence in section 5.
-- **No reduction in clinical measurement error**, on the evidence in section 6.
+- **No improvement in contour fidelity**, on the direct evidence in section 6.
+- **No reduction in clinical measurement error**, on the evidence in section 7.
   The single positive result across the three independent measurements is the
   AP75 gain; the contour metrics and the clinical endpoint do not support it.
 - **No comparison against prior published SOTA**, because none exists for this
