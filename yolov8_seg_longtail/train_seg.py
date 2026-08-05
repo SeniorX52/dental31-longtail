@@ -159,6 +159,52 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
         return loss
 
 
+class HighResProto(torch.nn.Module):
+    """Prototype head at input/2 instead of the stock input/4.
+
+    Motivation is measured, not assumed. YOLOv8-seg reconstructs every instance
+    mask as a linear combination of 32 prototype maps produced at input/4 -- a
+    160x160 grid at imgsz 640. On this dataset the median annotated instance is
+    ~24 px across, which is 6 px on that grid, and 68 % of instances are under
+    8 px. Round-tripping the ground truth through the grid
+    (`tools/mask_resolution_ceiling.py`) shows 17.7 % of instances cannot reach
+    IoU 0.75 no matter how good the model is, with root canal treatment capped
+    at 0.622 and caries at 0.721 -- both below the threshold. AP75 is bounded by
+    the representation before training begins.
+
+    Doubling the grid cuts that structurally impossible share to 5.4 % and
+    raises the achievable Dice ceiling from 0.896 to 0.949.
+
+    The extra stage is sub-pixel convolution (PixelShuffle, Shi et al. CVPR
+    2016) rather than another transposed convolution: it rearranges the 256
+    channels of the existing stage into 64 channels at twice the resolution, so
+    the wide tensor never exists at high resolution and the memory cost stays
+    near 210 MB at batch 8. A transposed convolution holding 256 channels at
+    320x320 would cost roughly four times that.
+
+    cv1, upsample and cv2 are carried over from the pretrained head unchanged.
+    Only the final 1x1 projection is rebuilt, because its input width changes
+    from 256 to 64; it is 8k parameters and retrains quickly.
+
+    NOTE: must be paired with mask_ratio=2. This ultralytics build resizes the
+    *proto* to the ground-truth mask resolution, so leaving the ground truth at
+    input/4 would immediately discard the extra resolution.
+    """
+
+    def __init__(self, proto: torch.nn.Module):
+        super().__init__()
+        self.cv1 = proto.cv1
+        self.upsample = proto.upsample
+        self.cv2 = proto.cv2
+        c_ = proto.cv2.conv.out_channels          # 256
+        nm = proto.cv3.conv.out_channels          # 32 prototypes
+        self.shuffle = torch.nn.PixelShuffle(2)   # 256 @ HxW -> 64 @ 2H x 2W
+        self.cv3 = torch.nn.Conv2d(c_ // 4, nm, 1)
+
+    def forward(self, x):
+        return self.cv3(self.shuffle(self.cv2(self.upsample(self.cv1(x)))))
+
+
 class LongTailSegModel(SegmentationModel):
     def init_criterion(self):
         return BoundaryAwareSegLoss(self)
@@ -171,11 +217,13 @@ class LongTailSegTrainer(SegmentationTrainer):
     def __init__(self, overrides=None, _callbacks=None,
                  class_weights: Optional[torch.Tensor] = None,
                  boundary_weight: float = 0.0,
-                 mask_aux: str = "band"):
+                 mask_aux: str = "band",
+                 proto_scale: int = 4):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
         self._lt_boundary_weight = boundary_weight
         self._lt_mask_aux = mask_aux
+        self._lt_proto_scale = proto_scale
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         model = self.set_model_names_for_load(
@@ -188,6 +236,13 @@ class LongTailSegTrainer(SegmentationTrainer):
             model.class_weights = self._lt_class_weights
         model.boundary_weight = self._lt_boundary_weight
         model.mask_aux = self._lt_mask_aux
+        if getattr(self, "_lt_proto_scale", 4) == 2:
+            # swap AFTER load() so the reused stages keep their pretrained weights
+            head = model.model[-1]
+            head.proto = HighResProto(head.proto)
+            print("prototype head: input/2 (%dx%d at imgsz 640) via sub-pixel "
+                  "convolution; only the final 1x1 projection is new"
+                  % (640 // 2, 640 // 2))
         return model
 
 
@@ -218,6 +273,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "original run directory to the original epoch target. "
                          "Class weights / boundary term are re-attached by the "
                          "trainer, so the criterion is identical after resume.")
+    ap.add_argument("--proto-scale", type=int, default=4, choices=[2, 4],
+                    help="prototype grid as input/N. 4 is stock (160x160 at "
+                         "imgsz 640); 2 doubles it to 320x320, which cuts the "
+                         "share of instances that cannot reach IoU 0.75 from "
+                         "17.7%% to 5.4%% (see tools/mask_resolution_ceiling.py). "
+                         "Automatically sets mask_ratio to match.")
     ap.add_argument("--mask-aux", default="band",
                     choices=["none", "band", "dice", "tversky",
                              "focal_tversky", "kervadec"],
@@ -273,10 +334,17 @@ def main(argv: Optional[List[str]] = None) -> None:
           ("cache", "channels_last", "compile", "workers") if k in overrides})
     print("mask auxiliary term:", comparator_losses.describe(args.mask_aux),
           "(weight %.3f)" % args.boundary_weight)
+    if args.proto_scale == 2:
+        # This build resizes the PROTO to the ground-truth mask resolution, so
+        # leaving mask_ratio at 4 would downsample the new prototypes straight
+        # back to 160 and discard the change entirely.
+        overrides["mask_ratio"] = 2
+        print("mask_ratio forced to 2 to match the input/2 prototype grid")
     trainer = LongTailSegTrainer(overrides=overrides,
                                  class_weights=weights,
                                  boundary_weight=args.boundary_weight,
-                                 mask_aux=args.mask_aux)
+                                 mask_aux=args.mask_aux,
+                                 proto_scale=args.proto_scale)
     trainer.train()
 
 
