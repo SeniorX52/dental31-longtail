@@ -81,6 +81,11 @@ PY
 )
 echo "$CANDS" | grep '^#' || true
 CANDS=$(echo "$CANDS" | grep -v '^#')
+# FORCE_CANDS overrides the validation-table selection. Needed because the
+# table can only nominate arms that were actually run at 50 epochs, and the
+# arm that isolates a single component may not be among them. Selection still
+# never touches test: the override names a configuration, not a result.
+[ -n "${FORCE_CANDS:-}" ] && CANDS="$FORCE_CANDS"
 echo "candidates: $CANDS"
 
 # Progress is the LAST EPOCH NUMBER recorded in results.csv, not the row count.
@@ -93,6 +98,18 @@ run_epoch() {
   [ -f "$1/results.csv" ] || { echo 0; return; }
   awk -F, 'NR==1{for(i=1;i<=NF;i++){gsub(/^[ \t]+|[ \t]+$/,"",$i); if($i=="epoch") c=i} next}
            c && $c+0>m {m=$c+0} END{printf "%d", m+0}' "$1/results.csv"
+}
+
+# results.csv is flushed asynchronously, so immediately after training returns it
+# can still be one row behind the epoch that actually finished. That is not a
+# theoretical race: a completed 100-epoch run was read as 99/100 and refused,
+# and the canonical final was then set to the losing arm.
+#
+# tools/run_finished.py checks the checkpoint's own completion marker instead
+# (ultralytics stamps epoch = -1 and strips the optimizer when a run ends),
+# which does not depend on flush timing.
+run_finished() {
+  python3 tools/run_finished.py "$1" 2>/dev/null
 }
 
 best_run() {
@@ -112,6 +129,7 @@ for ARM in $CANDS; do
     S1b) WS=0.99;    BW=0;   CP=0 ;;
     S1c) WS=invsqrt; BW=0;   CP=0 ;;
     S2)  WS=invsqrt; BW=0.5; CP=0 ;;
+    SB)  WS=none;    BW=0.5; CP=0 ;;   # boundary ALONE -- isolates the objective
     S3)  WS=invsqrt; BW=0;   CP=1 ;;
     S4)  WS=invsqrt; BW=0.5; CP=1 ;;
     *)   WS=invsqrt; BW=0;   CP=0 ;;
@@ -157,13 +175,14 @@ for ARM in $CANDS; do
   # mAP 0.1007 -- a below-baseline number that would have been reported as the
   # project's headline result. The test split is touched once, so a wrong
   # number here is expensive to notice and impossible to un-report.
-  if [ "${n:-0}" -lt 100 ]; then
-    echo "[$(stamp)] $ARM reached only ${n:-0}/100 epochs -- REFUSING to score an"
-    echo "            unfinished run. Fix the cause, then relaunch to resume."
+  if [ "${n:-0}" -lt 100 ] && ! run_finished "$dir"; then
+    echo "[$(stamp)] $ARM reached only ${n:-0}/100 epochs and its checkpoint is not"
+    echo "            marked finished -- REFUSING to score an unfinished run."
+    echo "            Fix the cause, then relaunch to resume."
     continue
   fi
 
-  step "ONE-TIME test evaluation for $ARM  (verified ${n}/100 epochs)"
+  step "ONE-TIME test evaluation for $ARM  (epochs ${n}/100, checkpoint finished)"
   python yolov8_seg_longtail/predict_to_coco.py \
     --weights "$W" --gt data_clean/annotations/instances_test.json \
     --images data_clean/test/images --out "preds/final_${ARM}_test.json" \

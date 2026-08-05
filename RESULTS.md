@@ -111,7 +111,54 @@ is why the final stage runs both the best-mAP and best-AP75 candidates.
 
 ---
 
-## 4. Contour metrics — where the boundary claim does not hold
+## 4. Project 2 final — held-out test, 100 epochs
+
+Both candidates nominated by the validation table were trained to the full
+budget and scored once on test, against the 100-epoch baseline.
+
+| model | mAP | AP50 | AP75 | head | mid | tail |
+|---|---|---|---|---|---|---|
+| baseline | **0.1051** | **0.2590** | **0.0687** | 0.2861 | **0.1038** | **0.0365** |
+| S1c (invsqrt) | 0.0973 | 0.2369 | 0.0612 | 0.2867 | 0.0964 | 0.0252 |
+| S2 (invsqrt + boundary) | 0.1007 | 0.2430 | 0.0650 | **0.2908** | 0.1024 | 0.0261 |
+
+Deltas against the baseline, in percentage points:
+
+| model | mAP | AP50 | AP75 | head | tail |
+|---|---|---|---|---|---|
+| S1c | −0.78 | −2.21 | −0.76 | +0.06 | −1.13 |
+| S2 | −0.44 | −1.60 | −0.37 | **+0.47** | −1.04 |
+
+**Neither candidate beats the baseline overall.** Head-class AP is the single
+metric where S2 is ahead. The +10.7 % AP75 gain measured on validation at 50
+epochs did not transfer: on test at 100 epochs S2 is 0.37 pp *below* baseline
+on AP75.
+
+### What the decomposition shows
+
+S1c differs from the baseline in exactly one respect — inverse-sqrt class
+weighting — and it costs **−0.78 pp mAP**. S2 is S1c plus the boundary term and
+recovers **+0.34 pp mAP, +0.61 pp AP50, +0.38 pp AP75, +0.41 pp head** of that.
+
+So the boundary term is contributing in the direction claimed. It cannot
+overcome the loss caused by the class weighting it was stacked on. Both
+candidates inherit that weighting because the ablation grid was cumulative, and
+**no boundary-alone arm was ever trained at the full budget**. On this
+decomposition, baseline plus the boundary term's contribution would land near
+0.1085, above baseline — which is a prediction, not a result, until the arm is
+run.
+
+`SB` (boundary alone, no class weighting, 100 epochs) is therefore the arm the
+segmentation claim rests on. It is running.
+
+The measured cost of inverse-sqrt weighting on test also contradicts its
+appearance on validation, where it was neutral to slightly positive at 50
+epochs (mAP +0.10 pp). This is the third instance in this project of validation
+ordering failing to transfer to test.
+
+---
+
+## 5. Contour metrics — where the boundary claim does not hold
 
 Region and contour metrics on the isolated contrast, validation, confidence cut
 0.15 (selected on the *baseline* arm so it cannot favour the method, then
@@ -162,7 +209,7 @@ this.
 
 ---
 
-## 5. Downstream clinical endpoint — bone-loss area error
+## 6. Downstream clinical endpoint — bone-loss area error
 
 A better contour metric is not itself evidence of clinical utility, so the
 quantity a clinician would read off the segmentation is measured directly.
@@ -204,7 +251,7 @@ this operating point, not of the loss being compared.
 
 ---
 
-## 6. Training schedule — every arm overtrains
+## 7. Training schedule — every arm overtrains
 
 Validation mask mAP50-95 from the trainer's own per-epoch metrics (a shape, not
 a number — the reportable figures come from the shared pycocotools scorer):
@@ -231,7 +278,7 @@ best-mAP arm lost at 100 epochs.
 
 ---
 
-## 7. Detection
+## 8. Detection
 
 | arm | split | mAP | AP50 | AP75 | head | tail |
 |---|---|---|---|---|---|---|
@@ -244,14 +291,17 @@ components and was discarded rather than reported.
 
 ---
 
-## 8. What is not claimed
+## 9. What is not claimed
 
 - **No long-tail improvement.** The evaluation split has no statistical power
   for it: 16 of 31 classes occur in fewer than 10 validation images and eleven
   tail classes score exactly zero. No such claim appears in any title, abstract
   or conclusion.
-- **No improvement in contour fidelity**, on the direct evidence in section 4.
-- **No reduction in clinical measurement error**, on the evidence in section 5.
+- **No improvement over the baseline on the held-out test split**, on the
+  evidence in section 4. The single metric where the method leads is head-class
+  AP.
+- **No improvement in contour fidelity**, on the direct evidence in section 5.
+- **No reduction in clinical measurement error**, on the evidence in section 6.
   The single positive result across the three independent measurements is the
   AP75 gain; the contour metrics and the clinical endpoint do not support it.
 - **No comparison against prior published SOTA**, because none exists for this
