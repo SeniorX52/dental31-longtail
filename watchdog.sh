@@ -94,7 +94,11 @@ elif [ ! -f reports/ablation_S4_valid_segm.json ]; then
 elif [ ! -f reports/final_seg_test_segm.json ]; then
   log "stage 3 (P2 final) down, relaunching"
   setsid nohup bash final_seg_run.sh >> logs/final_seg.log 2>&1 < /dev/null &
-elif [ ! -f reports/dino_abl_C1_valid_bbox.json ]; then
+elif [ ! -f reports/dino_abl_D2_valid_bbox.json ] \
+  || [ ! -f reports/dino_abl_D3_valid_bbox.json ] \
+  || [ ! -f reports/dino_abl_D6_valid_bbox.json ] \
+  || [ ! -f reports/dino_abl_D7_valid_bbox.json ] \
+  || [ ! -f reports/dino_abl_C1_valid_bbox.json ]; then
   # stage 4 = the FROZEN detection matrix D1..D7 + the class-balanced control
   # C1. Gated on C1 rather than on the last arm in the script so the final test
   # evaluation can start as soon as the deliverable matrix is complete; the
