@@ -340,18 +340,104 @@ best-mAP arm lost at 100 epochs.
 
 ---
 
-## 9. Detection
+## 9. Detection — the frozen matrix
 
-| arm | split | mAP | AP50 | AP75 | head | tail |
-|---|---|---|---|---|---|---|
-| D1 standard DINO-DETR | valid | 0.1625 | 0.3080 | 0.1551 | 0.3808 | 0.0368 |
+Validation, 12 epochs per arm (official DINO 1x), seed 42, identical
+initialisation and evaluation protocol. No arm received a hyperparameter search.
 
-The frozen matrix (D2–D7 plus the class-balanced control C1) has not run. The
-previous grid was cumulative — every arm after the baseline also carried
-repeat-factor sampling — so it could not attribute anything to individual
-components and was discarded rather than reported.
+| arm | configuration | mAP | AP50 | AP75 | head | mid | tail |
+|---|---|---|---|---|---|---|---|
+| D1 | standard DINO-DETR | **0.1625** | 0.3080 | 0.1551 | 0.3808 | **0.2118** | 0.0368 |
+| D2 | frequency-aware loss only | *diverged* | | | | | |
+| D3 | frequency-aware matching only | *diverged* | | | | | |
+| D4 | frequency-aware denoising only | 0.1633 | **0.3165** | **0.1572** | **0.3821** | 0.2029 | **0.0455** |
+| D5 | **unified (all three)** | 0.1020 | 0.1998 | 0.0939 | 0.3805 | 0.0959 | **0.0000** |
+| D6 | unified + oversampling | 0.1014 | 0.1988 | 0.0946 | 0.3808 | 0.0943 | 0.0000 |
+| D7 | unified + contrast enhancement | 0.1012 | 0.1993 | 0.0929 | 0.3733 | 0.0972 | 0.0000 |
+| C1 | conventional class-balanced reweighting | 0.1461 | 0.2910 | 0.1375 | 0.3707 | 0.1847 | 0.0270 |
 
----
+Deltas against the baseline, in percentage points:
+
+| arm | mAP | AP50 | AP75 | mid | tail |
+|---|---|---|---|---|---|
+| D4 | +0.08 | +0.84 | +0.21 | −0.89 | +0.88 |
+| D5 | **−6.05** | −10.83 | −6.11 | −11.59 | −3.68 |
+| D6 | −6.10 | −10.93 | −6.05 | −11.75 | −3.68 |
+| D7 | −6.12 | −10.88 | −6.21 | −11.45 | −3.68 |
+| C1 | −1.64 | −1.71 | −1.76 | −2.71 | −0.97 |
+
+### The decisive comparison fails
+
+The pre-registered claim was that frequency-awareness applied *consistently*
+across classification loss, Hungarian matching and denoising would beat
+applying it in one place and beat ordinary loss reweighting. The comparison
+that settles it is **D5 − C1**:
+
+    mAP −4.41   AP50 −9.12   AP75 −4.36   mid −8.87   tail −2.70  (pp)
+
+**The unified treatment loses decisively to plain class-balanced reweighting**,
+which in turn loses to changing nothing at all. Tail AP in every unified arm is
+exactly **0.0000** — the metric the method was designed to improve is the one it
+destroys. Layering oversampling (D6) or contrast enhancement (D7) on top changes
+nothing, because the underlying configuration is already broken.
+
+Only **D4**, frequency-aware denoising on its own, is above the baseline, and by
++0.08 pp mAP. That is inside the noise band and carries no claim, though its
++0.88 pp tail and +0.84 pp AP50 are the only movement in the intended direction
+anywhere in the matrix.
+
+### Why: the adjustment is calibrated for a different regime
+
+Logit adjustment subtracts `tau · log p(c)` from each class logit. Measured on
+this training set:
+
+| | instances | log-prior | logit shift at tau = 1.0 |
+|---|---|---|---|
+| rarest present class | 1 | −11.47 | **+11.47** |
+| most common class | 34,318 | −1.03 | +1.03 |
+| **spread** | | | **10.44** |
+
+A +11.47 shift saturates the sigmoid for every query on that class. Menon et al.
+(2021) validated `tau = 1.0` on CIFAR-LT and ImageNet-LT, whose imbalance is of
+order 100:1 to 1000:1. This dataset is **34,320:1**, well outside that regime.
+
+`tau = 1.0` was used everywhere precisely because the protocol gave no arm a
+hyperparameter search, which is what keeps the budgets matched and comparable.
+That is the right default when the published setting is in-distribution. Here it
+is the defect, and it was visible in the log-prior table before any arm ran.
+
+### Divergence is itself patterned
+
+Four arms failed to complete, all with `inf` or `NaN` cost matrices at
+`linear_sum_assignment` in the Hungarian matcher, and every one of them applies
+the adjustment **inconsistently**:
+
+| arm | adjustment applied to | outcome |
+|---|---|---|
+| D2 | loss only | diverged |
+| D3 | matching only | diverged |
+| L1 | matching + denoising (no loss) | diverged at 9/12 |
+| L2 | loss + denoising (no matching) | diverged |
+| D4 | denoising only | **stable** |
+| D5, D6, D7 | loss + matching + denoising | **stable** (but wrecked) |
+
+Checkpoints on disk are numerically clean, so divergence develops during the
+run. When the loss carries a +11.47 shift and the matcher scores queries on
+unadjusted probabilities, the two optimise against different scales and the
+assignment degenerates. Consistency does prevent divergence — it simply does not
+produce accuracy at this tau.
+
+This is an observation from crashes, not a designed stability experiment: the
+arms were not built to test it, gradient clipping was already active at 0.1, and
+each is a single seed.
+
+### What is being done about it
+
+`run_dino_tau.sh` re-runs the unified configuration at `tau = 0.5` and
+`tau = 0.25`, changing nothing else, to separate "the method fails" from "the
+published constant does not transfer to this imbalance". D5 at `tau = 1.0`
+remains in the frozen matrix exactly as run, and the sweep is reported as a
+sweep.
 
 ## 10. What is not claimed
 
@@ -368,6 +454,10 @@ components and was discarded rather than reported.
   AP75 gain; the contour metrics and the clinical endpoint do not support it.
 - **No comparison against prior published SOTA**, because none exists for this
   dataset.
+- **No detection improvement.** The unified method is 6.05 pp below the
+  baseline and 4.41 pp below plain reweighting, with tail AP at exactly zero.
+  Only frequency-aware denoising alone is nominally above baseline, by 0.08 pp,
+  which is inside the noise band.
 - **Single seed** on all finals. Determinism is exact — two independent runs of
   the same configuration at the same seed agree to six decimals — so seed
   variation is the only source of spread, and it has not yet been measured.
