@@ -43,6 +43,7 @@ from yolov8_seg_longtail import comparator_losses
 from ultralytics.utils import RANK
 from ultralytics.utils.loss import v8SegmentationLoss
 from ultralytics.utils.ops import crop_mask
+from ultralytics.nn.modules import Conv
 
 
 def class_counts_from_yolo_labels(labels_dir: str, nc: int) -> torch.Tensor:
@@ -205,9 +206,90 @@ class HighResProto(torch.nn.Module):
         return self.cv3(self.shuffle(self.cv2(self.upsample(self.cv1(x)))))
 
 
+class P2Proto(torch.nn.Module):
+    """Prototype head fed from P2 (stride 4) instead of P3 (stride 8).
+
+    This supersedes HighResProto, which raised the prototype grid by upsampling
+    P3-derived features. That added resolution without adding information: the
+    features were already band-limited at stride 8. Feeding the head from P2
+    supplies genuine stride-4 detail, which is the established fix for small
+    objects in this architecture family -- the YOLO P2-head variants exist for
+    exactly this reason, and PointRend, RefineMask and Mask Transfiner all
+    address the same coarse-mask failure mode in two-stage detectors.
+
+    Why it matters here specifically. `tools/mask_resolution_ceiling.py` shows
+    the stock input/4 grid caps mean Dice at 0.8963 and leaves 17.7 % of
+    instances unable to reach IoU 0.75 at all, with root canal treatment at
+    0.622 and caries at 0.721 -- both below the threshold. The median instance
+    is 6 px on that grid.
+
+    Stock path : cv1(P3 @80) -> 256@80, upsample -> 256@160, cv2 -> 256@160,
+                 cv3 -> 32@160
+    This path  : cv1(P2 @160) -> 256@160, cv2 -> 256@160, PixelShuffle ->
+                 64@320, cv3 -> 32@320
+
+    `cv2` is reused unchanged and still runs at 160x160, the same role it had
+    after the stock upsample, so its pretrained weights stay meaningful. `cv1`
+    and `cv3` are rebuilt because their channel widths change. The transposed
+    upsample is dropped in favour of sub-pixel convolution (Shi et al., CVPR
+    2016), which keeps the 256-channel tensor off the 320x320 grid -- a
+    ConvTranspose there would cost roughly four times the activation memory.
+
+    Net effect on capacity is NEGATIVE: cv1 shrinks (160 vs 320 input
+    channels), cv3 shrinks (64 vs 256 input channels), and the transposed
+    convolution disappears. Any gain therefore cannot be attributed to a bigger
+    model.
+    """
+
+    def __init__(self, proto: torch.nn.Module, p2_ch: int):
+        super().__init__()
+        c_ = proto.cv2.conv.out_channels      # 256
+        nm = proto.cv3.conv.out_channels      # 32 prototypes
+        self.cv1 = Conv(p2_ch, c_, k=3)       # rebuilt for P2's channel count
+        self.cv2 = proto.cv2                  # pretrained, unchanged role
+        self.shuffle = torch.nn.PixelShuffle(2)
+        self.cv3 = torch.nn.Conv2d(c_ // 4, nm, 1)
+        self._src = None
+
+    def set_source(self, t: torch.Tensor) -> None:
+        """Hand the head its P2 feature map for this forward pass."""
+        self._src = t
+
+    def forward(self, x):
+        src = self._src if self._src is not None else x
+        self._src = None                      # never reuse a stale map
+        return self.cv3(self.shuffle(self.cv2(self.cv1(src))))
+
+
 class LongTailSegModel(SegmentationModel):
     def init_criterion(self):
         return BoundaryAwareSegLoss(self)
+
+
+class P2ProtoSegModel(LongTailSegModel):
+    """SegmentationModel that hands P2 to the prototype head.
+
+    The stock forward keeps only the layers listed in `self.save`, and P2
+    (layer 2) is not among them, so its output is discarded before the head
+    runs. This subclass adds it to `save` and passes it to the head each
+    forward. Implementing it here rather than with a forward hook matters:
+    the model is pickled into the checkpoint, and hooks do not survive that,
+    so a hook-based version would silently fall back to P3 at inference.
+    """
+
+    P2_INDEX = 2
+
+    def _predict_once(self, x, profile=False, visualize=False, embed=None):
+        y = []
+        for m in self.model:
+            if m.f != -1:
+                x = y[m.f] if isinstance(m.f, int) else [x if j == -1 else y[j] for j in m.f]
+            proto = getattr(m, "proto", None)
+            if proto is not None and hasattr(proto, "set_source"):
+                proto.set_source(y[self.P2_INDEX])
+            x = m(x)
+            y.append(x if m.i in self.save else None)
+        return x
 
 
 class LongTailSegTrainer(SegmentationTrainer):
@@ -218,25 +300,39 @@ class LongTailSegTrainer(SegmentationTrainer):
                  class_weights: Optional[torch.Tensor] = None,
                  boundary_weight: float = 0.0,
                  mask_aux: str = "band",
-                 proto_scale: int = 4):
+                 proto_scale: int = 4,
+                 proto_src: str = "p3"):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
         self._lt_boundary_weight = boundary_weight
         self._lt_mask_aux = mask_aux
         self._lt_proto_scale = proto_scale
+        self._lt_proto_src = proto_src
 
     def get_model(self, cfg=None, weights=None, verbose=True):
+        cls = (P2ProtoSegModel if getattr(self, "_lt_proto_src", "p3") == "p2"
+               else LongTailSegModel)
         model = self.set_model_names_for_load(
-            LongTailSegModel(cfg, nc=self.data["nc"],
-                             ch=self.data["channels"],
-                             verbose=verbose and RANK == -1))
+            cls(cfg, nc=self.data["nc"],
+                ch=self.data["channels"],
+                verbose=verbose and RANK == -1))
         if weights:
             model.load(weights)
         if self._lt_class_weights is not None:
             model.class_weights = self._lt_class_weights
         model.boundary_weight = self._lt_boundary_weight
         model.mask_aux = self._lt_mask_aux
-        if getattr(self, "_lt_proto_scale", 4) == 2:
+        if getattr(self, "_lt_proto_src", "p3") == "p2":
+            head = model.model[-1]
+            p2_ch = model.model[P2ProtoSegModel.P2_INDEX].cv2.conv.out_channels
+            head.proto = P2Proto(head.proto, p2_ch)
+            # P2 is not in the stock save list, so its output would be dropped
+            # before the head runs
+            if P2ProtoSegModel.P2_INDEX not in model.save:
+                model.save = sorted(set(list(model.save) + [P2ProtoSegModel.P2_INDEX]))
+            print("prototype head fed from P2 (stride 4, %d ch) -> protos at "
+                  "input/2; cv2 reused, cv1 and cv3 rebuilt" % p2_ch)
+        elif getattr(self, "_lt_proto_scale", 4) == 2:
             # swap AFTER load() so the reused stages keep their pretrained weights
             head = model.model[-1]
             head.proto = HighResProto(head.proto)
@@ -273,6 +369,19 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "original run directory to the original epoch target. "
                          "Class weights / boundary term are re-attached by the "
                          "trainer, so the criterion is identical after resume.")
+    ap.add_argument("--proto-src", default="p3", choices=["p3", "p2"],
+                    help="which feature level feeds the prototype head. p3 is "
+                         "stock (stride 8, protos at input/4). p2 uses the "
+                         "stride-4 level, giving protos at input/2 from genuine "
+                         "high-resolution features rather than upsampled coarse "
+                         "ones. Implies --no-val, because ultralytics' own "
+                         "validator assumes the stock grid.")
+    ap.add_argument("--no-val", action="store_true",
+                    help="skip ultralytics' internal per-epoch validation. Its "
+                         "mask_iou compares ground truth and predictions at "
+                         "resolutions it derives itself, which breaks when the "
+                         "prototype grid changes. Scoring is done afterwards by "
+                         "predict_to_coco.py, which does not use that path.")
     ap.add_argument("--proto-scale", type=int, default=4, choices=[2, 4],
                     help="prototype grid as input/N. 4 is stock (160x160 at "
                          "imgsz 640); 2 doubles it to 320x320, which cuts the "
@@ -334,17 +443,20 @@ def main(argv: Optional[List[str]] = None) -> None:
           ("cache", "channels_last", "compile", "workers") if k in overrides})
     print("mask auxiliary term:", comparator_losses.describe(args.mask_aux),
           "(weight %.3f)" % args.boundary_weight)
-    if args.proto_scale == 2:
+    if args.proto_scale == 2 or args.proto_src == "p2":
         # This build resizes the PROTO to the ground-truth mask resolution, so
         # leaving mask_ratio at 4 would downsample the new prototypes straight
         # back to 160 and discard the change entirely.
         overrides["mask_ratio"] = 2
         print("mask_ratio forced to 2 to match the input/2 prototype grid")
+    if args.proto_src == "p2" or args.no_val:
+        overrides["val"] = False
     trainer = LongTailSegTrainer(overrides=overrides,
                                  class_weights=weights,
                                  boundary_weight=args.boundary_weight,
                                  mask_aux=args.mask_aux,
-                                 proto_scale=args.proto_scale)
+                                 proto_scale=args.proto_scale,
+                                 proto_src=args.proto_src)
     trainer.train()
 
 
