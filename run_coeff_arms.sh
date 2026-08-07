@@ -98,13 +98,19 @@ wait_for_gpu() {
 # run at mAP 0.1007). Never score a run without asking whether it finished its
 # schedule. run_finished.py reads the epoch number recorded in the checkpoint,
 # not the row count of results.csv.
+# run_finished.py takes the run directory POSITIONALLY and reads the epoch = -1
+# completion marker from the checkpoint. Calling it with --run/--epochs flags it
+# does not define makes it exit 2 on an argparse error, which reads as "not
+# finished" and silently refuses to score a run that completed. That is exactly
+# what happened to abl_K1_coeffdistill on the 07 Aug overnight chain: it trained
+# all 50 epochs and was never scored.
 finished() {
-  python tools/run_finished.py --run "runs/segment/$1" --epochs "$2" >/dev/null 2>&1
+  python tools/run_finished.py "runs/segment/$1" >/dev/null 2>&1
 }
 
 run_arm() {
   local tag="$1"; shift
-  if [ -d "runs/segment/$tag" ] && finished "$tag" 50; then
+  if [ -d "runs/segment/$tag" ] && finished "$tag"; then
     echo "[$(date '+%F %T')] $tag already complete, skipping"
     return 0
   fi
@@ -117,7 +123,7 @@ run_arm() {
       --channels-last --weights none --boundary-weight 0 \
       --name "$tag" "$@" 2>&1 | tail -25
 
-  if finished "$tag" 50; then
+  if finished "$tag"; then
     echo "[$(date '+%F %T')] $tag finished its schedule"
   else
     echo "[$(date '+%F %T')] *** $tag did NOT finish 50 epochs -- NOT scoring it"
@@ -149,7 +155,7 @@ REF=abl_S0
 
 score() {
   local tag="$1" dt rdt
-  finished "$tag" 50 || { echo "[$(date '+%F %T')] $tag unfinished, refusing to score"; return 0; }
+  finished "$tag" || { echo "[$(date '+%F %T')] $tag unfinished, refusing to score"; return 0; }
   dt="preds/ablation_${tag}_valid.json"
   local w="runs/segment/$tag/weights/best.pt"
 

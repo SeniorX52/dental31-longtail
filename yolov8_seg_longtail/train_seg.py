@@ -132,7 +132,11 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
         self.boundary_weight = float(getattr(model, "boundary_weight", 0.0))
         self.mask_aux = str(getattr(model, "mask_aux", "band") or "band")
         self.coeff_weight = float(getattr(model, "coeff_weight", 0.0))
-        self.coeff_ridge = float(getattr(model, "coeff_ridge", 1e-3))
+        # ridge is now RELATIVE to trace(A)/nm, so 1e-2 means "the smallest
+        # eigenvalue is at least a hundredth of the mean one"
+        self.coeff_ridge = float(getattr(model, "coeff_ridge", 1e-2))
+        self.coeff_max_norm = float(getattr(model, "coeff_max_norm", 50.0))
+        self.coeff_clip = float(getattr(model, "coeff_clip", 10.0))
 
     def oracle_coefficients(self, gt_mask, proto, boxes):
         """Closed-form best coefficients for these masks on these prototypes.
@@ -180,28 +184,56 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
             iny = (ys[None, :] >= bx[:, 1:2]) & (ys[None, :] < bx[:, 3:4])
             B = (iny[:, :, None] & inx[:, None, :]).reshape(n, -1).float()
 
-            eye = self.coeff_ridge * torch.eye(nm, device=P.device)
+            eye = torch.eye(nm, device=P.device)
             out = []
             for i in range(0, n, 8):          # chunked: (k, 32, HW) is the peak
                 b = B[i:i + 8]
                 PB = P[None] * b[:, None]                             # (k,32,HW)
-                A = PB @ P.T + eye                                    # (k,32,32)
+                A = PB @ P.T                                          # (k,32,32)
                 r = (PB * y[i:i + 8, None]).sum(-1)                   # (k,32)
+
+                # RELATIVE ridge, and this is the difference between a target
+                # and a detonation. A = P B P^T is formed from learned features
+                # restricted to one box, so it is severely ill-conditioned:
+                # measured on COCO-pretrained prototypes over real dental
+                # instances its eigenvalues span 1e-6 to 1e3, and rounding puts
+                # the smallest slightly NEGATIVE. A fixed ridge of 1e-3 against
+                # that is not regularisation, it is a coin flip on whether the
+                # instance is singular, and a single singular instance out of
+                # 95,745 annotations sends c* to infinity. The first version of
+                # this used a fixed ridge and drove seg_loss to 7e7 with NaN by
+                # epoch 10. Scaling the ridge by the matrix's own trace bounds
+                # the condition number by construction, whatever the prototype
+                # scale or box size.
+                tr = A.diagonal(dim1=-2, dim2=-1).sum(-1).clamp_min(1e-12)
+                lam = self.coeff_ridge * (tr / nm)                    # (k,)
+                A = A + lam[:, None, None] * eye
                 try:
-                    out.append(torch.linalg.solve(A, r[..., None])[..., 0])
+                    c = torch.linalg.solve(A, r[..., None])[..., 0]
                 except Exception:
-                    out.append(torch.linalg.lstsq(A, r[..., None]).solution[..., 0])
+                    c = torch.linalg.lstsq(A, r[..., None]).solution[..., 0]
+
+                # Belt and braces: a target that is not finite, or absurdly
+                # large, teaches nothing and destroys the run. Drop it to zero
+                # weight rather than propagate it.
+                c = torch.nan_to_num(c, nan=0.0, posinf=0.0, neginf=0.0)
+                nrm = c.norm(dim=1, keepdim=True).clamp_min(1e-12)
+                c = c * (nrm.clamp_max(self.coeff_max_norm) / nrm)
+                out.append(c)
             return torch.cat(out).to(gt_mask.dtype)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)
         if self.coeff_weight > 0 and gt_mask.numel():
             c_star = self.oracle_coefficients(gt_mask, proto, xyxy)
-            # mean over coefficients, summed over instances, so the scale does
-            # not drift with the number of prototypes or the instance count
-            coeff_loss = F.mse_loss(pred.float(), c_star.float(),
-                                    reduction="none").mean(dim=1).sum()
-            self._coeff_accum = getattr(self, "_coeff_accum", 0.0) + float(coeff_loss.detach())
+            # RELATIVE error, not raw MSE. The magnitude of c* depends on the
+            # prototype scale and the box area, neither of which is fixed during
+            # training, so a raw MSE makes the weight mean something different
+            # at every step. Dividing by the target's own energy makes the term
+            # dimensionless and O(1): 1.0 means "as wrong as predicting zero".
+            num = (pred.float() - c_star.float()).pow(2).mean(dim=1)
+            den = c_star.float().pow(2).mean(dim=1) + 1e-6
+            coeff_loss = (num / den).clamp_max(self.coeff_clip).sum()
         bce = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         loss = (crop_mask(bce, xyxy).mean(dim=(1, 2)) / area).sum()
         if self.boundary_weight > 0 and self.mask_aux != "none":
@@ -406,7 +438,7 @@ class LongTailSegTrainer(SegmentationTrainer):
                  proto_scale: int = 4,
                  proto_src: str = "p3",
                  coeff_weight: float = 0.0,
-                 coeff_ridge: float = 1e-3,
+                 coeff_ridge: float = 1e-2,
                  coeff_width: int = 0):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
@@ -432,7 +464,7 @@ class LongTailSegTrainer(SegmentationTrainer):
         model.boundary_weight = self._lt_boundary_weight
         model.mask_aux = self._lt_mask_aux
         model.coeff_weight = getattr(self, "_lt_coeff_weight", 0.0)
-        model.coeff_ridge = getattr(self, "_lt_coeff_ridge", 1e-3)
+        model.coeff_ridge = getattr(self, "_lt_coeff_ridge", 1e-2)
         if getattr(self, "_lt_coeff_width", 0):
             widen_coefficient_head(model, self._lt_coeff_width)
         if getattr(self, "_lt_proto_src", "p3") == "p2":
@@ -508,8 +540,12 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "closed-form optimum on the model's own prototypes "
                          "instead of relying on gradient reaching them through "
                          "the prototype product. 0 disables.")
-    ap.add_argument("--coeff-ridge", type=float, default=1e-3,
-                    help="ridge term in the closed-form coefficient solve")
+    ap.add_argument("--coeff-ridge", type=float, default=1e-2,
+                    help="ridge in the closed-form solve, RELATIVE to trace(A)/nm. "
+                         "A = P B P^T is severely ill-conditioned (eigenvalues "
+                         "measured spanning 1e-6 to 1e3), so an absolute ridge "
+                         "regularises some instances and not others; a relative "
+                         "one bounds the condition number by construction.")
     ap.add_argument("--coeff-width", type=int, default=0,
                     help="rebuild the cv4 coefficient branch with this hidden "
                          "width (stock is 80). Capacity control for "
