@@ -274,6 +274,12 @@ establishes:
 
 ### Limitations
 
+**The published comparator losses did not run.** Soft Dice, Tversky, Focal
+Tversky and Kervadec's boundary loss are implemented behind a common interface,
+but the Kervadec arm failed with an in-place autograd error and the other three
+were queued behind it. The objective is therefore compared against the stock
+BCE baseline only, which is a necessary control and not a sufficient one.
+
 Single seed per arm; the noise floor is measured above and is the
 denominator for every comparison here. Single corpus. No external benchmark, so
 no long-tail claim appears in the title, abstract or conclusions. D2 and D3 are

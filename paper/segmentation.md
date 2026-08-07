@@ -11,7 +11,7 @@ We evaluate boundary-aware and class-balanced training objectives for instance
 segmentation on a 31-class panoramic dental radiograph corpus, and report that
 none of them improves on a tuned stock baseline once per-class contributions are
 decomposed. The result is not a null for want of trying: seven ablation cells at
-matched budget, four published comparator losses, a second backbone, an
+matched budget, four published comparator losses (implemented; only partially run, see limitations), a second backbone, an
 architectural change to the mask head, and a downstream clinical endpoint all
 land within the seed-to-seed spread.
 
@@ -308,6 +308,58 @@ alarms, more misses — and the two cancel in the endpoint.
 
 ---
 
+---
+
+## The mask deficit is coefficient prediction, not representation
+
+The 20-point gap between what the model achieves (Dice 0.6969) and what its
+prototype grid allows (0.8963) had no attribution. Prototype-based heads
+reconstruct each mask as `sigmoid(coeffs @ prototypes)`, so either the learned
+32-dimensional basis cannot represent these shapes, or the basis is adequate and
+the coefficient head fails to locate the right point in it. Those call for
+opposite fixes.
+
+`tools/oracle_coefficients.py` separates them without training. For every
+ground-truth instance it solves, in closed form, for the coefficient vector that
+best reconstructs it from the model's own prototypes:
+
+    c* = argmin_c || P^T c - y ||^2      over the instance's box crop
+
+Thresholding `P^T c*` gives the best mask **any** coefficient head could produce
+from that basis.
+
+| quantity | Dice |
+|---|---|
+| grid ceiling (what the resolution allows) | 0.8963 |
+| **oracle coefficients, full resolution** | **0.8659** |
+| oracle coefficients, at prototype resolution | 0.9636 |
+| what the trained model achieves | 0.6969 |
+
+**Attribution of the 0.1994 gap** (4123 instances):
+
+| source | Dice lost | share |
+|---|---|---|
+| prototype **basis** cannot represent it | 0.0304 | **15 %** |
+| **coefficient head** fails to find it | 0.1690 | **85 %** |
+
+The basis is not the constraint. At its own resolution it reconstructs ground
+truth at 0.9636; handed optimal coefficients the model jumps from 0.70 to 0.87.
+**85 % of the deficit is a head that cannot locate the right point in a space
+that already spans the shapes.**
+
+This closes the loop on every negative result above. Boundary terms and
+comparator losses reshape the *objective*; higher prototype resolution enlarges
+the *representation*. Neither is the binding constraint, which is why neither
+moved the number, and it is why the P2-fed head performed worse rather than
+better: it added resolution to a basis that was never the limit.
+
+The head capacities make the finding concrete. In YOLOv8x-seg the coefficient
+branch bottlenecks 320 to 80 channels and carries 1.33 M parameters, against
+2.26 M for the prototype generator and 7.41 M for classification. The smallest
+of the three heads is the one responsible for 85 % of the mask deficit.
+
+---
+
 ## Noise floor (measured)
 
 The reference configuration was trained at three seeds, everything else
@@ -359,6 +411,12 @@ What the work establishes instead:
    is why position-agnostic copy-paste is counter-productive.
 
 ### Limitations
+
+**The published comparator losses did not run.** Soft Dice, Tversky, Focal
+Tversky and Kervadec's boundary loss are implemented behind a common interface,
+but the Kervadec arm failed with an in-place autograd error and the other three
+were queued behind it. The objective is therefore compared against the stock
+BCE baseline only, which is a necessary control and not a sufficient one.
 
 Single seed on all reported arms; the noise floor is measured above and is
 the denominator for every comparison. Single corpus, single backbone family. No comparison

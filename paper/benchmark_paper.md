@@ -292,7 +292,7 @@ AP over classes with single-digit support is not a measurement.
 
 Nineteen configurations. Segmentation: reference, three class-weighting
 strengths, boundary objective alone and combined, copy-paste alone and combined,
-four published comparator losses, a second backbone, a P2-fed prototype head.
+four published comparator losses (implemented; only partially run, see limitations), a second backbone, a P2-fed prototype head.
 Detection: stock DINO-DETR, each frequency-aware component alone and unified,
 plus oversampling and contrast enhancement, a class-balanced control, a τ sweep,
 and decoupled classifier retraining.
@@ -328,6 +328,58 @@ consistent arm was stable. Consistency prevents divergence without producing
 accuracy.
 
 ---
+
+---
+
+---
+
+## The mask deficit is coefficient prediction, not representation
+
+The 20-point gap between what the model achieves (Dice 0.6969) and what its
+prototype grid allows (0.8963) had no attribution. Prototype-based heads
+reconstruct each mask as `sigmoid(coeffs @ prototypes)`, so either the learned
+32-dimensional basis cannot represent these shapes, or the basis is adequate and
+the coefficient head fails to locate the right point in it. Those call for
+opposite fixes.
+
+`tools/oracle_coefficients.py` separates them without training. For every
+ground-truth instance it solves, in closed form, for the coefficient vector that
+best reconstructs it from the model's own prototypes:
+
+    c* = argmin_c || P^T c - y ||^2      over the instance's box crop
+
+Thresholding `P^T c*` gives the best mask **any** coefficient head could produce
+from that basis.
+
+| quantity | Dice |
+|---|---|
+| grid ceiling (what the resolution allows) | 0.8963 |
+| **oracle coefficients, full resolution** | **0.8659** |
+| oracle coefficients, at prototype resolution | 0.9636 |
+| what the trained model achieves | 0.6969 |
+
+**Attribution of the 0.1994 gap** (4123 instances):
+
+| source | Dice lost | share |
+|---|---|---|
+| prototype **basis** cannot represent it | 0.0304 | **15 %** |
+| **coefficient head** fails to find it | 0.1690 | **85 %** |
+
+The basis is not the constraint. At its own resolution it reconstructs ground
+truth at 0.9636; handed optimal coefficients the model jumps from 0.70 to 0.87.
+**85 % of the deficit is a head that cannot locate the right point in a space
+that already spans the shapes.**
+
+This closes the loop on every negative result above. Boundary terms and
+comparator losses reshape the *objective*; higher prototype resolution enlarges
+the *representation*. Neither is the binding constraint, which is why neither
+moved the number, and it is why the P2-fed head performed worse rather than
+better: it added resolution to a basis that was never the limit.
+
+The head capacities make the finding concrete. In YOLOv8x-seg the coefficient
+branch bottlenecks 320 to 80 channels and carries 1.33 M parameters, against
+2.26 M for the prototype generator and 7.41 M for classification. The smallest
+of the three heads is the one responsible for 85 % of the mask deficit.
 
 ---
 
