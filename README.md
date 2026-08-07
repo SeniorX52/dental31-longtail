@@ -50,6 +50,30 @@ only the confirmed count is ever quoted. `tools/verify_no_duplicates.py` perform
 this check across **all** ordered split pairs, and is memory-bounded so it can
 run beside a `cache=ram` training job.
 
+## Findings
+
+The headline result is a systematic negative: across nineteen training
+configurations, no change to the objective, the sampling, the loss weighting or
+the mask head improves on a stock baseline beyond seed-level variation. The
+measured noise floor is **±0.21 pp mAP** at two standard deviations over three
+seeds of the reference configuration.
+
+What the work establishes instead is in `paper/`:
+
+| | |
+|---|---|
+| the distributed split cannot support evaluation | 95.9 % of test shares source images with train |
+| perceptual hashing alone is not a leakage test here | ~100 % false-positive rate on this modality |
+| the mask representation ceiling is real but not binding | model reaches 78 % of a ceiling it never touches |
+| distance metrics on per-model subsets invert their sign | HD95 flips from −17.3 % to significantly worse |
+| group means over low-support classes fabricate results | 98 % of one gain came from a 2-instance class |
+| the published logit-adjustment constant does not transfer | +11.47 logit shift at 34,320:1 imbalance |
+
+`paper/benchmark_paper.md` is the submission-shaped write-up;
+`paper/segmentation.md` and `paper/detection.md` are the per-project technical
+reports. LaTeX sources and built PDFs are in `paper/tex/` — `cd paper/tex && make`
+rebuilds all three with pdflatex and bibtex.
+
 ## Layout
 
 | path | purpose | verified by |
@@ -184,9 +208,10 @@ reproducible.
 
 Stated here rather than discovered later:
 
-- **Final tables are single-seed.** Seed replicates are queued for the isolated
-  boundary contrast; the detection side remains single-seed. Any claim resting
-  on a difference smaller than the seed spread is not yet supported.
+- **The noise floor is measured; most arms are single-seed.** Three seeds of the
+  reference configuration give a 2 sd band of ±0.21 pp mAP and ±0.50 pp AP75.
+  Individual arms remain single-seed, so any difference inside that band is not
+  a result. The seven-arm ablation spans 0.36 pp — inside the band.
 - **No comparison against tuned published boundary or class-imbalance losses.**
   The baselines are the stock objectives, which is a necessary control but not a
   sufficient one for a method claim.

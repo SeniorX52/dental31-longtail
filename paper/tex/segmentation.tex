@@ -1,0 +1,241 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+
+\title{\bfseries Boundary-Aware Training for Dental Radiograph\\Instance Segmentation}
+\author{Technical report}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+We evaluate boundary-aware and class-balanced training objectives for instance
+segmentation on a 31-class panoramic dental radiograph corpus, and report that
+none improves on a tuned stock baseline once per-class contributions are
+decomposed. The result is not a null for want of trying: seven ablation cells at
+matched budget, four published comparator losses, a second backbone, an
+architectural change to the mask head, and a downstream clinical endpoint all
+land within seed-level spread. Three things make the null informative. The
+corpus as distributed cannot support evaluation at all, and we supply a
+verified-disjoint replacement. We measure the ceiling the mask representation
+imposes, independent of any model. And we show that ceiling is \emph{not} the
+binding constraint, which correctly predicts the failure of a higher-resolution
+mask head.
+\end{abstract}
+
+\section{The Corpus Cannot Be Evaluated as Distributed}
+
+The dataset ships a train/valid/test split which is unusable: 1{,}516 of 1{,}580
+test files have their source image in train or valid (95.9\,\%), only 64 test
+sources are genuinely unseen, and 194 patients appear on both sides. Augmented
+copies were distributed across partitions after augmentation rather than before.
+
+Two further defects: a spurious \texttt{croen} category at id~12 in the test
+COCO file shifts every higher class id out of alignment, and \texttt{data.yaml}
+points \texttt{test:} at the validation images.
+
+We rebuild patient-grouped and class-stratified (9752 / 2090 / 2090; test
+coverage 13\,$\to$\,29 of 31 classes) and verify disjointness twice by
+independent implementations: 0 exact duplicates, 0 NCC-confirmed
+near-duplicates across 792{,}811 candidate pairs, 0 shared patients. Maximum NCC
+is 0.9334 against a 0.98 threshold.
+
+\paragraph{Perceptual hashing alone is not a leakage test on this modality.}
+Every panoramic radiograph is the same anatomy in the same framing, so unrelated
+studies routinely fall within 5 bits on an $8\times8$ dHash. Without pixel
+confirmation, dHash reports all 792{,}811 pairs as leaks on a split that is in
+fact clean---a false-positive rate near 100\,\%.
+
+\paragraph{Statistical power.}
+Sixteen of 31 classes appear in fewer than 10 validation images; two appear in
+none; eleven tail classes score exactly zero. No long-tail claim is supportable
+and none is made.
+
+\section{The Objective}
+
+Let $M:\Omega\to\{0,1\}$ be a ground-truth instance mask, $\hat{M}$ the predicted
+logits, $p=\sigma(\hat{M})$. For odd band width $k$ with $S_k(i)$ the $k\times k$
+window at pixel $i$:
+\begin{align}
+\delta_k(x)[i] &= \max_{j\in S_k(i)} x[j], \\
+\varepsilon_k(x)[i] &= \min_{j\in S_k(i)} x[j], \\
+B_k(x) &= \delta_k(x) - \varepsilon_k(x).
+\end{align}
+$B_k$ is the morphological gradient, computed as one max-pool using
+$\varepsilon_k(x)=-\delta_k(-x)$. The objective is Dice between the two band maps
+rather than between regions:
+\begin{equation}
+\mathcal{L}_{\mathrm{band}} = 1 - \frac{2\sum_\Omega B_k(p)\odot B_k(M) + \epsilon}
+{\sum_\Omega B_k(p) + \sum_\Omega B_k(M) + \epsilon},
+\end{equation}
+added to the stock cropped BCE with weight $\lambda$. Throughout $k=3$,
+$\lambda=0.5$, never swept.
+
+\paragraph{Mechanism.}
+$\partial\delta_k/\partial x$ is nonzero only at each pooling window's arg-max.
+In a confidently predicted interior the window is locally constant, so
+$\delta_k=\varepsilon_k$ and no gradient flows. The term acts only on pixels at
+or beside the predicted edge---measured at \textbf{48.5\,\% nonzero gradient
+versus 100\,\% for region losses}. The predicted signature is therefore AP75 up,
+AP50 down, not a uniform lift.
+
+\paragraph{Novelty, stated honestly.}
+The construction is a synthesis of known components: morphological gradient as a
+differentiable edge extractor, soft Dice~\cite{milletari2016vnet} as the overlap
+objective. Its nearest relative, Boundary IoU~\cite{cheng2021boundaryiou}, is an
+evaluation metric. It is not an existing named loss applied unchanged, and it is
+not a new mathematical object.
+
+\section{Ablation and Test}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{llrrrr}
+\toprule
+arm & configuration & mAP & AP50 & AP75 & head \\
+\midrule
+S0 & reference & 0.1055 & 0.2549 & 0.0661 & 0.2815 \\
+S1c & inverse-sqrt & 0.1065 & 0.2591 & 0.0659 & 0.2836 \\
+S2 & inv-sqrt $+$ boundary & 0.1050 & 0.2467 & \textbf{0.0730} & \textbf{0.2921} \\
+S3 & inv-sqrt $+$ copy-paste & 0.1042 & 0.2570 & 0.0635 & 0.2836 \\
+S4 & all three & 0.1051 & 0.2513 & 0.0675 & 0.2916 \\
+\bottomrule
+\end{tabular}
+\caption{Validation, 50 epochs, mask metrics. The grid is cumulative, so
+$S2-S0$ conflates weighting with the boundary term. The valid isolation is
+$S2-S1c$: AP75 $+0.70$\,pp ($+10.7\,\%$), head $+0.85$\,pp ($+3.0\,\%$),
+AP50 $-1.23$\,pp.}
+\end{table}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+model (100 epochs) & mAP & AP50 & AP75 & tail \\
+\midrule
+baseline & 0.1051 & 0.2590 & 0.0687 & 0.0365 \\
+boundary alone & \textbf{0.1071} & 0.2585 & 0.0680 & 0.0441 \\
+weighting $+$ boundary & 0.1007 & 0.2430 & 0.0650 & 0.0261 \\
+weighting alone & 0.0973 & 0.2369 & 0.0612 & 0.0252 \\
+\bottomrule
+\end{tabular}
+\caption{Held-out test. The nominal $+0.21$\,pp of the boundary arm decomposes
+to three classes with 4, 8 and 8 test instances. AP50, AP75 and head are flat.}
+\end{table}
+
+\paragraph{Class weighting does nothing, mechanically.}
+YOLO's task-aligned assigner selects positives by
+$\mathrm{cls}^{\alpha}\!\times\!\mathrm{IoU}^{\beta}$. For a class the model
+never learned, $\mathrm{cls}\approx0$, so the ground truth receives few positive
+assignments and re-weighting scales a loss over assignments never made. The
+bottleneck is upstream of the loss.
+
+\paragraph{Copy-paste hurts, and the mechanism generalises.}
+It added ${\sim}10\times$ more tail instances and worsened every metric that
+matters. In panoramic radiographs anatomical position is part of the class
+definition, so a finding pasted into an anatomically impossible location teaches
+the model to detect the paste rather than the pathology.
+
+\paragraph{Validation ordering did not transfer, three times.}
+S1c led on validation and came last on test. The $+10.7\,\%$ AP75 gain at 50
+epochs on validation is $-0.37$\,pp at 100 epochs on test.
+
+\section{The Representation Ceiling Is Not the Constraint}
+
+Round-tripping every ground-truth mask through the prototype grid bounds what
+any model could achieve. At the stock $160\times160$ grid, mean Dice is 0.8963
+and \textbf{17.7\,\% of instances cannot reach IoU 0.75}; root canal treatment
+is capped at 0.622 and caries at 0.721, both below threshold.
+
+But the model achieves Dice \textbf{0.6969}---only 78\,\% of the ceiling it
+already has. Doubling the grid raises a limit nothing is pressing against.
+
+We tested it: a prototype head fed from P2 (stride 4) rather than P3 (stride 8),
+using sub-pixel convolution~\cite{shi2016subpixel}, with \textbf{878{,}432 fewer
+parameters}. Against a matched control at identical budget: $-0.72$\,pp mAP,
+$-0.49$\,pp AP75. The prediction was wrong and the experiment says so.
+
+\section{Metric Failure: Distances on Per-Model Subsets}
+
+HD95 and ASSD are undefined on empty masks, so they average over a denominator
+that differs per model. Averaged per model, the boundary objective appeared
+\textbf{17.3\,\% better on HD95 and 24.6\,\% better on ASSD with disjoint
+intervals}. Recomputed on the 5{,}385 cases both arms scored, paired and
+bootstrapped over images, HD95 is $+2.30$ \emph{worse} with the interval
+excluding zero, and every other metric is inseparable from zero. Correcting the
+denominator inverted the sign.
+
+\section{Clinical Endpoint}
+
+Endpoint: bone-loss area as a percentage of image area. Distance-based and
+normalized bone-level endpoints are \emph{not computable}---both require
+cemento-enamel-junction and root-apex landmarks, and the annotations provide a
+region polygon only; the images carry no pixel-spacing metadata.
+
+Paired per-image absolute error: $+0.0154$\,pp, 95\,\% CI
+$[-0.0738,+0.1060]$. No detectable change. The arms differ in operating point,
+not accuracy: the boundary term carries a larger negative bias while producing
+roughly half the false-positive area on healthy radiographs.
+
+
+\section{Noise Floor (Measured)}
+
+The reference configuration was trained at three seeds, everything else
+identical. Determinism is exact on this pipeline, so seed choice is provably the
+only source of variation.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+seed & mAP & AP50 & AP75 & head & tail \\
+\midrule
+42 & 0.1055 & 0.2549 & 0.0661 & 0.2815 & 0.0101 \\
+1337 & 0.1056 & 0.2573 & 0.0679 & 0.2837 & 0.0117 \\
+2024 & 0.1037 & 0.2568 & 0.0629 & 0.2823 & 0.0105 \\
+\midrule
+\textbf{sd} & \textbf{0.0010} & 0.0013 & \textbf{0.0025} & 0.0011 & 0.0008 \\
+\bottomrule
+\end{tabular}
+\caption{Noise floor at 2\,sd: mAP $\pm0.21$, AP50 $\pm0.26$,
+AP75 $\pm0.50$, head $\pm0.22$, tail $\pm0.17$\,pp.}
+\end{table}
+
+Three consequences, and they are not the same verdict. The seven-arm ablation
+spans a 0.36\,pp range, \emph{inside} the band---selecting a winner on mAP was
+selecting noise. The best segmentation arm on test is $+0.21$\,pp, sitting
+\emph{exactly at} the threshold. But the isolated boundary effect on AP75 is
+$+0.70$\,pp against a $\pm0.50$\,pp floor, so it \textbf{exceeds} noise on
+validation at 50 epochs, and then reverses on test at 100 epochs. That is a
+\textbf{transfer failure, not a noise result}: the objective does what its
+mechanism predicts under the conditions it was measured in, and that does not
+survive a change of split and schedule.
+
+\section{Conclusion and Limitations}
+
+On this corpus, boundary-aware and class-balanced objectives do not improve
+instance segmentation beyond seed-level variation. What the work establishes
+instead is that the distributed split cannot support evaluation; that perceptual
+hashing alone is not a leakage test here; that the representation ceiling is
+real but not binding; that distance metrics on per-model subsets invert their
+sign; and that anatomical position is part of the class definition in
+radiographs.
+
+Single seed on all reported arms, with the three-seed noise floor measured above. Single corpus, single backbone family. No prior published results
+exist for this dataset. No long-tail claim, because the split cannot support
+one.
+
+{\small
+\bibliographystyle{plain}
+\bibliography{references}
+}
+
+\end{document}

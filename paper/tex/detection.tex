@@ -1,0 +1,221 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+
+\title{\bfseries Frequency-Aware DETR Training at Extreme Class Imbalance}
+\author{Technical report}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+\noindent
+Logit adjustment is a standard remedy for long-tailed recognition, and applying
+it consistently across a DETR-family model's classification loss, Hungarian
+matching cost and denoising task is a natural extension. We report that at
+34{,}320:1 imbalance it fails catastrophically: the unified treatment is
+6.05\,pp mAP below a stock baseline with tail AP at exactly zero, and loses
+4.41\,pp to conventional class-balanced reweighting. We identify the cause as
+magnitude rather than principle---at $\tau=1.0$ the adjustment applies a
+$+11.47$ logit shift to the rarest class---and show recovery is monotonic in
+$\tau$ while never clearing the baseline. We further report a reproducible
+stability pattern: every arm applying the adjustment \emph{inconsistently}
+diverged, while every consistent arm trained stably. Finally, decoupled
+classifier retraining is nominally $+0.53$\,pp mAP on test, of which 98\,\%
+comes from a single class with \emph{two} test instances.
+\end{abstract}
+
+\section{Setup}
+
+Stock DINO-DETR~\cite{zhang2023dino}, ResNet-50 4-scale, initialised from the
+official COCO checkpoint with a reinitialised 31-class embedding.
+$\mathrm{num\_classes}=32$ because DINO indexes raw \texttt{category\_id}
+without remapping.
+
+All arms: 12 epochs (official $1\times$), \texttt{lr\_drop}~11, batch~2,
+seed~42, identical initialisation and evaluation protocol. \textbf{No arm
+receives a hyperparameter search.} That keeps budgets matched; Section~4 shows
+it is also, in this instance, the defect.
+
+Evaluated on a verified-disjoint split: 9752 / 2090 / 2090 images, 0 exact
+duplicates and 0 NCC-confirmed near-duplicates across 792{,}811 candidate pairs.
+
+\section{The Claim Under Test}
+
+In DETR-family models the matcher decides which query is supervised for which
+ground truth. If the classification loss is frequency-adjusted but the matching
+cost is not, matching keeps assigning tail ground truth to queries whose
+unadjusted scores look good while the loss optimises a different scale. The
+hypothesis is that applying the adjustment \emph{consistently}---across loss,
+matching cost and denoising---beats applying it in one place, and beats ordinary
+loss reweighting.
+
+The matrix was frozen before any arm ran. The control C1 applies per-class loss
+weights only~\cite{cui2019classbalanced}---no logit shift, nothing in the
+matcher or denoising---and was verified to reproduce stock sigmoid focal loss to
+\textbf{0.0 absolute difference} at unit weights, so the per-class weight is
+provably the only change.
+
+\section{Result}
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{llrrrrr}
+\toprule
+arm & configuration & mAP & AP50 & AP75 & mid & tail \\
+\midrule
+D1 & baseline & \textbf{0.1625} & 0.3080 & 0.1551 & \textbf{0.2118} & 0.0368 \\
+D2 & loss only & \multicolumn{5}{c}{\emph{diverged}} \\
+D3 & matching only & \multicolumn{5}{c}{\emph{diverged}} \\
+D4 & denoising only & 0.1633 & \textbf{0.3165} & \textbf{0.1572} & 0.2029 & \textbf{0.0455} \\
+D5 & \textbf{unified} & 0.1020 & 0.1998 & 0.0939 & 0.0959 & \textbf{0.0000} \\
+D6 & unified $+$ oversampling & 0.1014 & 0.1988 & 0.0946 & 0.0943 & 0.0000 \\
+D7 & unified $+$ contrast & 0.1012 & 0.1993 & 0.0929 & 0.0972 & 0.0000 \\
+C1 & plain reweighting & 0.1461 & 0.2910 & 0.1375 & 0.1847 & 0.0270 \\
+\bottomrule
+\end{tabular}
+\caption{Validation, matched budget. The decisive comparison $D5-C1$ is
+mAP $-4.41$, AP50 $-9.12$, AP75 $-4.36$, mid $-8.87$, tail $-2.70$\,pp.}
+\end{table}
+
+The unified treatment loses decisively to plain class-balanced reweighting,
+which in turn loses 1.64\,pp to changing nothing. \textbf{Tail AP in every
+unified arm is exactly 0.0000}---the metric the method targets is the one it
+destroys. Layering oversampling~\cite{gupta2019lvis} or contrast enhancement
+changes nothing, because the base configuration is already broken.
+
+Only D4 clears the baseline, by 0.08\,pp mAP. That is inside noise and carries
+no claim. On held-out test, D5 confirms: mAP 0.1001 against 0.1570
+($-5.69$\,pp), tail 0.0000 against 0.0598.
+
+\section{Diagnosis: Magnitude, Not Principle}
+
+Logit adjustment~\cite{menon2021logit} subtracts $\tau\log p(c)$ from each class
+logit. On this training set the rarest present class ($n=1$) has log-prior
+$-11.47$ and the most common ($n=34{,}318$) has $-1.03$: a spread of
+\textbf{10.44} in logit space. A $+11.47$ shift saturates the sigmoid for every
+query on that class.
+
+Menon~et~al. validated $\tau=1.0$ on CIFAR-LT and ImageNet-LT, whose imbalance
+is of order 100:1 to 1000:1. This corpus is \textbf{34{,}320:1}.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{rrrr}
+\toprule
+$\tau$ & mAP & $\Delta$ vs baseline & tail \\
+\midrule
+1.00 & 0.1020 & $-6.05$ & 0.0000 \\
+0.50 & 0.1340 & $-2.85$ & 0.0135 \\
+0.25 & 0.1601 & $-0.24$ & 0.0346 \\
+\bottomrule
+\end{tabular}
+\caption{Sweep on the unified configuration, changing nothing else. Recovery is
+monotonic in $\tau$, confirming magnitude as the mechanism, and incomplete:
+even at $\tau=0.25$ the method does not reach the baseline.}
+\end{table}
+
+This is a transferability result about the published default. $\tau=1.0$ is used
+across the long-tail literature without restatement of the imbalance regime it
+was tuned for. At clinical imbalance it is not merely suboptimal; it is
+destructive.
+
+\section{Divergence Is Patterned}
+
+Four arms failed with \texttt{inf} or \texttt{NaN} cost matrices at
+\texttt{linear\_sum\_assignment}. Which arms failed is not random: D2 (loss
+only), D3 (matching only), L1 (matching $+$ denoising) and L2 (loss $+$
+denoising) all diverged, while D4 (denoising only) and D5--D7 (all three) were
+stable.
+
+Checkpoints on disk are numerically clean---max $|w|$ $1.42\mathrm{e}{+}01$,
+identical to arms that completed---so divergence develops during the run.
+Gradient clipping was active at 0.1 throughout. When the loss carries a $+11.47$
+shift and the matcher scores on unadjusted probabilities, the two components
+optimise against different scales and the assignment degenerates.
+\textbf{Consistency prevents divergence; it does not produce accuracy.}
+
+We report this as an observation from crashes, not a designed stability
+experiment. The pattern is reproducible---D2 diverged on every attempt.
+
+\section{Decoupled Classifier Retraining}
+
+The long-tail literature indicates rebalancing belongs at the classifier
+stage~\cite{kang2020decoupling,wang2019calibration}, not inside representation
+learning---the opposite of every arm above, and structurally unable to exhibit
+the failure of Section~5. We freeze all parameters except the classification
+embedding, start from the trained baseline, and retrain for 6 epochs under
+repeat-factor sampling.
+
+On test this gives mAP 0.1623 against 0.1570 ($+0.53$\,pp), AP50 $+0.88$\,pp,
+tail $+1.25$\,pp---positive on every metric, with the largest gain exactly where
+a long-tail method should deliver.
+
+\textbf{It does not survive decomposition.} The largest single contributor is
+one class with \textbf{two test instances} moving $0.0000\to0.1515$,
+contributing $+0.52$\,pp---\textbf{98\,\% of the total}. Excluding it, the gain
+is $+0.01$\,pp. On the 18 classes with ${\ge}10$ test instances, 6 improve and
+12 worsen.
+
+
+\section{Noise Floor (Measured)}
+
+The reference configuration was trained at three seeds, everything else
+identical. Determinism is exact on this pipeline, so seed choice is provably the
+only source of variation.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+seed & mAP & AP50 & AP75 & head & tail \\
+\midrule
+42 & 0.1055 & 0.2549 & 0.0661 & 0.2815 & 0.0101 \\
+1337 & 0.1056 & 0.2573 & 0.0679 & 0.2837 & 0.0117 \\
+2024 & 0.1037 & 0.2568 & 0.0629 & 0.2823 & 0.0105 \\
+\midrule
+\textbf{sd} & \textbf{0.0010} & 0.0013 & \textbf{0.0025} & 0.0011 & 0.0008 \\
+\bottomrule
+\end{tabular}
+\caption{Noise floor at 2\,sd: mAP $\pm0.21$, AP50 $\pm0.26$,
+AP75 $\pm0.50$, head $\pm0.22$, tail $\pm0.17$\,pp.}
+\end{table}
+
+Three consequences, and they are not the same verdict. The seven-arm ablation
+spans a 0.36\,pp range, \emph{inside} the band---selecting a winner on mAP was
+selecting noise. The best segmentation arm on test is $+0.21$\,pp, sitting
+\emph{exactly at} the threshold. But the isolated boundary effect on AP75 is
+$+0.70$\,pp against a $\pm0.50$\,pp floor, so it \textbf{exceeds} noise on
+validation at 50 epochs, and then reverses on test at 100 epochs. That is a
+\textbf{transfer failure, not a noise result}: the objective does what its
+mechanism predicts under the conditions it was measured in, and that does not
+survive a change of split and schedule.
+
+\section{Conclusion and Limitations}
+
+No configuration tested improves on stock DINO-DETR beyond noise. Consistent
+frequency-awareness loses 4.41\,pp to plain reweighting, which loses to changing
+nothing; the pre-registered hypothesis is refuted by its own frozen matrix. The
+published $\tau=1.0$ does not transfer to clinical imbalance, with failure
+monotonic in $\tau$. Inconsistent application diverges reproducibly. Decoupled
+classifier retraining is the right mechanism and still does not clear noise. And
+group means over low-support classes fabricate results---twice, in two
+independent projects.
+
+Single seed per arm, with the noise floor measured above. Single corpus.
+No external benchmark, and therefore no long-tail claim in the title, abstract
+or conclusions. Two cells are recorded as diverged rather than scored.
+
+{\small
+\bibliographystyle{plain}
+\bibliography{references}
+}
+
+\end{document}

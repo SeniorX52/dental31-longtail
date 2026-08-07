@@ -1,0 +1,407 @@
+\documentclass[10pt,twocolumn,letterpaper]{article}
+
+\usepackage[margin=0.75in]{geometry}
+\usepackage{times}
+\usepackage{amsmath,amssymb}
+\usepackage{booktabs}
+\usepackage{graphicx}
+\usepackage{multirow}
+\usepackage[table]{xcolor}
+\usepackage[colorlinks=true,linkcolor=black,citecolor=blue,urlcolor=blue]{hyperref}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf}
+
+\title{\vspace{-2em}\bfseries Measuring Progress on Long-Tailed Dental Radiograph
+Segmentation: Leakage, Ceilings, and Noise Floors}
+
+\author{}
+\date{}
+
+\begin{document}
+\maketitle
+
+\begin{abstract}
+We report a systematic negative result on a 31-class panoramic dental radiograph
+corpus: across nineteen training configurations spanning boundary-aware
+objectives, class-balanced losses, frequency-aware DETR training, an
+architectural change to the mask head, and decoupled classifier retraining, no
+configuration improves on a stock baseline beyond seed-level variation.
+
+The contribution is not the null itself but the apparatus required to establish
+it, each element of which caught a confident wrong answer that would otherwise
+have been reported. \textbf{(1)} The corpus cannot be evaluated as distributed:
+95.9\,\% of its test partition shares source images with training. \textbf{(2)}
+Perceptual hashing alone is not a leakage test on this modality, with a
+false-positive rate near 100\,\%. \textbf{(3)} The mask representation imposes a
+measurable ceiling that is \emph{not} the binding constraint; a
+higher-resolution head with 878{,}432 \emph{fewer} parameters performs
+0.72\,pp worse, as predicted. \textbf{(4)} Distance metrics conditioned on
+per-model subsets invert their own sign once compared on the intersection of
+scored cases. \textbf{(5)} Group means over low-support classes fabricate
+results: in one case 98\,\% of a $+0.53$\,pp mAP gain came from a single class
+with \emph{two} test instances. \textbf{(6)} The published logit-adjustment
+constant does not transfer from $\sim$100:1 to 34{,}320:1 imbalance.
+\end{abstract}
+
+\section{Introduction}
+
+Long-tailed instance segmentation and detection on clinical imagery is an active
+area, and the standard toolkit---class-balanced losses, logit adjustment,
+repeat-factor sampling, boundary-aware objectives---is well established on
+natural-image benchmarks. We set out to apply that toolkit to a 31-class dental
+radiograph corpus with 34{,}320:1 imbalance and measure the contribution of each
+component.
+
+None of it worked. That is worth reporting, because the reasons are specific,
+measurable, and mostly not about the methods. The corpus as distributed cannot
+support evaluation at all. The architecture imposes a ceiling that is real but
+not binding. The metrics the field uses for contour quality invert their sign
+under a denominator that differs per model. And group means over classes with
+single-digit support will manufacture a headline on demand---twice, in our case,
+before we caught them.
+
+We regard contributions (2), (4) and (5) as the most transferable: each is a
+measurement protocol that any group working on long-tailed clinical
+segmentation can apply, and each caught an error in our own work that would have
+survived review.
+
+\section{Related Work}
+
+\paragraph{Long-tailed recognition.}
+Class-balanced loss weighting via effective number of samples~\cite{cui2019classbalanced}
+and logit adjustment~\cite{menon2021logit} are the standard remedies.
+Kang~et~al.~\cite{kang2020decoupling} showed representation and classifier
+learning should be \emph{decoupled}, with rebalancing applied at the classifier
+stage; Wang~et~al.~\cite{wang2019calibration} adapt this to instance
+segmentation. Repeat-factor sampling~\cite{gupta2019lvis} rebalances at the data
+level, and Seesaw loss~\cite{wang2021seesaw} rescales gradients per class pair.
+
+Our results bear on the \emph{regime} these were validated in.
+Menon~et~al.~\cite{menon2021logit} tune $\tau=1.0$ on CIFAR-LT and ImageNet-LT
+at roughly 100:1 to 1000:1 imbalance. At 34{,}320:1 the same constant applies a
+$+11.47$ logit shift and destroys the classifier. We find the failure monotonic
+in $\tau$, which localises the problem to magnitude rather than principle.
+
+\paragraph{High-quality mask prediction.}
+PointRend~\cite{kirillov2020pointrend} recasts segmentation as rendering,
+refining adaptively at uncertain points. RefineMask~\cite{zhang2021refinemask}
+fuses fine-grained features in stages. Mask
+Transfiner~\cite{ke2022transfiner} represents masks as a quadtree and corrects
+only error-prone nodes. All three exist because coarse mask prediction is a
+known failure mode. We measure that failure mode directly rather than assuming
+it, and find it is \emph{not} what limits our model---a result invisible without
+the model-free ceiling measurement of Section~\ref{sec:ceiling}.
+
+\paragraph{Boundary-aware objectives.}
+Boundary loss~\cite{kervadec2018boundary} integrates the prediction against a
+precomputed distance map; HD loss~\cite{karimi2019hausdorff} estimates Hausdorff
+distance directly; Boundary IoU~\cite{cheng2021boundaryiou} is an evaluation
+metric restricted to a contour band. Our band-Dice objective is a synthesis of
+known components---morphological gradient as a differentiable edge extractor,
+soft Dice~\cite{milletari2016vnet} as the overlap objective---and we say so
+rather than claiming a new loss family.
+
+\paragraph{Augmentation.}
+Copy-paste~\cite{ghiasi2021copypaste} reliably helps on natural images. We find
+it harmful here, and propose a mechanism: in panoramic radiographs anatomical
+position is part of the class definition, so a finding pasted into an
+anatomically impossible location teaches the model to detect the paste rather
+than the pathology.
+
+\section{The Corpus Cannot Be Evaluated as Distributed}
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lr}
+\toprule
+image files & 13{,}932 \\
+distinct source images & 6{,}395 \\
+test files whose source appears in train/valid & \textbf{1{,}516 / 1{,}580 (95.9\,\%)} \\
+genuinely unseen test sources & \textbf{64} \\
+patients in both train and test & 194 \\
+\bottomrule
+\end{tabular}
+\caption{The distributed split. Augmentation was applied before partitioning
+rather than after, so any metric computed on it principally measures
+memorisation.}
+\end{table}
+
+Two further defects: a spurious \texttt{croen} category at id~12 in the test
+COCO file shifts every higher class id out of alignment with train and valid,
+and \texttt{data.yaml} points \texttt{test:} at the validation images.
+
+\paragraph{Replacement.}
+Patient-grouped and class-stratified: 9752 / 2090 / 2090, with test coverage
+rising from 13 of 31 classes to 29.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lrr}
+\toprule
+check & impl.~A & impl.~B \\
+\midrule
+exact duplicate groups (SHA-256) & 0 & 0 \\
+NCC-confirmed near-duplicates & \textbf{0} & \textbf{0} \\
+dHash candidates examined & 441{,}240 & 792{,}811 \\
+rejected as look-alikes & all & all \\
+scope & test vs rest & all pairs \\
+\bottomrule
+\end{tabular}
+\caption{Disjointness verified twice by independent implementations. Maximum
+NCC across 792{,}811 candidate pairs is 0.9334, against a 0.98 confirmation
+threshold.}
+\end{table}
+
+\subsection{Perceptual Hashing Alone Is Not a Leakage Test}
+
+On natural images a dHash Hamming distance below ${\sim}5$ bits is strong
+evidence of duplication. On panoramic radiographs it is nearly meaningless:
+every image is the same anatomy, same framing, same grayscale statistics, so
+unrelated studies routinely fall within 5 bits.
+
+Run without pixel confirmation, dHash reports \textbf{792{,}811 leaking pairs on
+a split we independently verify as clean}---a false-positive rate near 100\,\%.
+Any audit of this modality that stops at perceptual hashing will condemn a clean
+split, or worse, be tuned until it stops complaining.
+
+Two-stage detection---dHash as a cheap candidate generator, normalised
+cross-correlation as confirmation---separates the cases cleanly. Genuine
+re-encoded duplicates score $\mathrm{NCC}\ge0.99$; distinct studies stay below
+0.94.
+
+\subsection{Statistical Power}
+
+Sixteen of 31 classes appear in fewer than 10 validation images; two appear in
+none; eleven tail classes score exactly zero. \textbf{Image counts, not instance
+counts, are the effective sample size.} No long-tail claim is supportable on
+this corpus, and we make none.
+
+\section{The Representation Ceiling, and Why It Is Not the Constraint}
+\label{sec:ceiling}
+
+YOLOv8-seg predicts 32 coefficients per instance and reconstructs masks as a
+linear combination of prototypes at input$/4$---$160\times160$ at
+$\mathrm{imgsz}=640$. The median instance here is \textbf{6\,px on that grid};
+68\,\% are under 8\,px.
+
+We bound what any model could achieve by round-tripping every ground-truth mask
+through the grid and scoring it against itself.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lrr}
+\toprule
+prototype grid & mean Dice & cannot reach IoU 0.75 \\
+\midrule
+\textbf{$160\times160$ (stock)} & \textbf{0.8963} & \textbf{17.7\,\%} \\
+$320\times320$ & 0.9492 & 5.4\,\% \\
+$640\times640$ & 0.9901 & 0.5\,\% \\
+\bottomrule
+\end{tabular}
+\caption{Model-free ceiling over 20{,}601 instances. Root canal treatment is
+capped at IoU 0.622 and caries at 0.721---both \emph{below} the 0.75
+threshold, excluding 4{,}493 instances from AP75 before training begins.}
+\end{table}
+
+The model's behaviour agrees: mask AP50 reaches 87\,\% of box AP50, mask AP75
+only 49\,\%.
+
+\subsection{The Inference We Initially Drew Was Wrong}
+
+This looks like a diagnosis. It is not.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lr}
+\toprule
+ceiling at the current grid & 0.8963 \\
+\textbf{achieved by the model} & \textbf{0.6969} \\
+headroom already available & 0.1994 \\
+additional headroom from doubling & 0.0529 \\
+\bottomrule
+\end{tabular}
+\caption{The model sits at 78\,\% of the ceiling it already has.}
+\end{table}
+
+We tested it. A prototype head fed from P2 (stride 4) rather than P3 (stride 8)
+yields $320\times320$ prototypes from genuine high-resolution features, using
+sub-pixel convolution~\cite{shi2016subpixel} to keep the wide tensor off the
+high-resolution grid, with \textbf{878{,}432 fewer parameters} than stock so any
+gain could not be a capacity artifact. Against a matched control at identical
+budget and protocol: \textbf{$-0.72$\,pp mAP, $-0.49$\,pp AP75}.
+
+The ceiling is real and worth reporting. It is not the binding constraint, and
+the check that establishes this---comparing achieved performance against the
+ceiling---costs one line of arithmetic. We ran it after the experiment. It
+should be run before.
+
+\section{Two Metric Failures That Produce Confident Wrong Answers}
+
+\subsection{Distance Metrics on Per-Model Subsets}
+
+HD95 and ASSD are undefined when either mask is empty, so implementations
+average them over cases where both are non-empty. \textbf{That denominator
+differs per model.} A model that misses a hard structure drops that case from
+its own average and can post better distances by predicting less.
+
+Averaged per model, our boundary objective appeared \textbf{17.3\,\% better on
+HD95 and 24.6\,\% better on ASSD, with disjoint confidence intervals}---the
+strongest result in the project.
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lrrrc}
+\toprule
+metric & ref. & bnd. & difference & sep. \\
+\midrule
+Dice & 0.6953 & 0.6969 & $+0.0017$ & no \\
+IoU & 0.5685 & 0.5706 & $+0.0021$ & no \\
+boundary F & 0.7857 & 0.7881 & $+0.0024$ & no \\
+\textbf{HD95} & 66.36 & 68.66 & $\mathbf{+2.30}$ \textbf{(worse)} & \textbf{yes} \\
+ASSD & 18.40 & 18.82 & $+0.43$ (worse) & no \\
+\bottomrule
+\end{tabular}
+\caption{Recomputed on the 5{,}385 cases both models scored, paired, with the
+per-case difference bootstrapped over images. Correcting the denominator did
+not attenuate the effect---it \emph{inverted the sign}.}
+\end{table}
+
+\paragraph{Protocol.} Any metric conditioned on a per-model subset must be
+compared on the intersection of cases both models scored, paired, with coverage
+reported alongside. Reporting distances without coverage permits a model to win
+by predicting less.
+
+\subsection{Group Means over Low-Support Classes}
+
+Two headline gains, in two independent projects, dissolved under decomposition.
+For detection, decoupled classifier retraining gave $+0.53$\,pp mAP and
+$+1.25$\,pp tail---positive on every metric, with the largest gain exactly where
+a long-tail method should deliver.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lr}
+\toprule
+observed mAP delta & $+0.53$\,pp \\
+largest contributor & one class, \textbf{2 test instances} \\
+its contribution & $+0.52$\,pp \\
+\textbf{share of total} & \textbf{98\,\%} \\
+excluding that class & \textbf{$+0.01$\,pp} \\
+on 18 classes with ${\ge}10$ instances & 6 improve, 12 worsen \\
+\bottomrule
+\end{tabular}
+\caption{Decomposition of the detection gain.}
+\end{table}
+
+\paragraph{Protocol.} Report per-class deltas with support counts alongside any
+group mean, and state the result restricted to classes with adequate support. A
+group AP over classes with single-digit support is not a measurement.
+
+\section{Results}
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+model & mAP & AP50 & AP75 & tail \\
+\midrule
+baseline & 0.1051 & 0.2590 & 0.0687 & 0.0365 \\
+boundary alone & 0.1071 & 0.2585 & 0.0680 & 0.0441 \\
+weighting $+$ boundary & 0.1007 & 0.2430 & 0.0650 & 0.0261 \\
+weighting alone & 0.0973 & 0.2369 & 0.0612 & 0.0252 \\
+\bottomrule
+\end{tabular}
+\caption{Segmentation, held-out test. The nominal $+0.21$\,pp of the boundary
+arm decomposes to three classes with 4, 8 and 8 test instances.}
+\end{table}
+
+\begin{table}[t]
+\centering\small
+\begin{tabular}{lrr}
+\toprule
+arm & mAP & tail \\
+\midrule
+baseline & 0.1625 & 0.0368 \\
+denoising only & 0.1633 & 0.0455 \\
+plain reweighting & 0.1461 & 0.0270 \\
+\textbf{unified ($\tau=1.0$)} & \textbf{0.1020} & \textbf{0.0000} \\
+\bottomrule
+\end{tabular}
+\caption{Detection, validation, matched budget. The unified treatment loses
+4.41\,pp to plain reweighting, which loses 1.64\,pp to changing nothing. Tail AP
+is exactly zero in all unified arms.}
+\end{table}
+
+The $\tau$ sweep gives $-6.05$, $-2.85$, $-0.24$\,pp at $\tau=1.0,0.5,0.25$:
+monotonic recovery, never reaching baseline. The catastrophe is a mis-scaled
+constant; the deficit is not.
+
+\paragraph{Divergence is patterned.} Every arm applying the adjustment
+inconsistently diverged with \texttt{inf} or \texttt{NaN} cost matrices in the
+Hungarian matcher; every consistent arm was stable. Consistency prevents
+divergence without producing accuracy.
+
+
+\section{Noise Floor (Measured)}
+
+The reference configuration was trained at three seeds, everything else
+identical. Determinism is exact on this pipeline, so seed choice is provably the
+only source of variation.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+seed & mAP & AP50 & AP75 & head & tail \\
+\midrule
+42 & 0.1055 & 0.2549 & 0.0661 & 0.2815 & 0.0101 \\
+1337 & 0.1056 & 0.2573 & 0.0679 & 0.2837 & 0.0117 \\
+2024 & 0.1037 & 0.2568 & 0.0629 & 0.2823 & 0.0105 \\
+\midrule
+\textbf{sd} & \textbf{0.0010} & 0.0013 & \textbf{0.0025} & 0.0011 & 0.0008 \\
+\bottomrule
+\end{tabular}
+\caption{Noise floor at 2\,sd: mAP $\pm0.21$, AP50 $\pm0.26$,
+AP75 $\pm0.50$, head $\pm0.22$, tail $\pm0.17$\,pp.}
+\end{table}
+
+Three consequences, and they are not the same verdict. The seven-arm ablation
+spans a 0.36\,pp range, \emph{inside} the band---selecting a winner on mAP was
+selecting noise. The best segmentation arm on test is $+0.21$\,pp, sitting
+\emph{exactly at} the threshold. But the isolated boundary effect on AP75 is
+$+0.70$\,pp against a $\pm0.50$\,pp floor, so it \textbf{exceeds} noise on
+validation at 50 epochs, and then reverses on test at 100 epochs. That is a
+\textbf{transfer failure, not a noise result}: the objective does what its
+mechanism predicts under the conditions it was measured in, and that does not
+survive a change of split and schedule.
+
+\section{Discussion}
+
+The standard long-tail and boundary-aware toolkit does not transfer to this
+corpus, and most of the reasons are not about the methods. Two are about the
+data: it cannot be evaluated as shipped, and 16 of 31 classes lack the support
+to measure anything. Two are about measurement: distance metrics and group means
+both produce confident wrong answers under conditions easy to satisfy
+accidentally. One is about regime: a published constant validated at 100:1 does
+not survive 34{,}320:1.
+
+Only one is about a method---the band-Dice objective produces the AP75/AP50
+signature its mechanism predicts, and that signal does not survive to test.
+
+We think the protocols of Sections~3.1, 5.1 and 5.2 are the durable output. Each
+is cheap, each applies to any long-tailed clinical segmentation study, and each
+caught an error in our own work that would otherwise have been published.
+
+\section{Limitations}
+
+Single seed on all reported arms; the three-seed noise floor is measured above. Single corpus, single backbone family per task. No comparison
+against prior published results, because none exist for this dataset. No
+external benchmark, and therefore no long-tail claim in the title, abstract or
+conclusions. Two detection cells are recorded as diverged rather than scored.
+
+{\small
+\bibliographystyle{plain}
+\bibliography{references}
+}
+
+\end{document}

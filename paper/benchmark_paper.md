@@ -329,6 +329,40 @@ accuracy.
 
 ---
 
+---
+
+## Noise floor (measured)
+
+The reference configuration was trained at three seeds, everything else
+identical. Determinism is exact on this pipeline, so seed choice is provably the
+only source of variation.
+
+| seed | mAP | AP50 | AP75 | head | tail |
+|---|---|---|---|---|---|
+| 42 | 0.1055 | 0.2549 | 0.0661 | 0.2815 | 0.0101 |
+| 1337 | 0.1056 | 0.2573 | 0.0679 | 0.2837 | 0.0117 |
+| 2024 | 0.1037 | 0.2568 | 0.0629 | 0.2823 | 0.0105 |
+| **sd** | **0.0010** | 0.0013 | **0.0025** | 0.0011 | 0.0008 |
+
+**Noise floor at 2 sd: mAP ±0.21 pp, AP50 ±0.26 pp, AP75 ±0.50 pp,
+head ±0.22 pp, tail ±0.17 pp.**
+
+Three consequences, and they are not all the same verdict:
+
+- The seven-arm ablation spans 0.1029–0.1065 mAP, a 0.36 pp spread. That is
+  **inside** the ±0.21 pp band once both directions are counted. Selecting a
+  winner on mAP across those arms was selecting noise.
+- The best segmentation arm on test is +0.21 pp, sitting **exactly at** the
+  threshold. It cannot be distinguished from seed choice.
+- The isolated boundary effect on AP75 is **+0.70 pp against a ±0.50 pp floor**,
+  so it **exceeds** noise on validation at 50 epochs. That effect was real. It
+  then reversed on test at 100 epochs (−0.37 pp). This is a **transfer failure,
+  not a noise result**, and the distinction matters: the objective does what its
+  mechanism predicts under the conditions it was measured in, and that does not
+  survive a change of split and schedule.
+
+---
+
 ## 7. Discussion
 
 The honest summary is that the standard long-tail and boundary-aware toolkit
@@ -352,9 +386,8 @@ each caught an error in our own work that would otherwise have been published.
 
 ## 8. Limitations
 
-Single seed on all reported arms; a three-seed noise-floor measurement of the
-reference configuration is in progress and is the correct denominator for every
-comparison above. Single corpus, single backbone family per task. No comparison
+Single seed on all reported arms; the three-seed noise floor is measured above
+and is the denominator for every comparison. Single corpus, single backbone family per task. No comparison
 against prior published results, because none exist for this dataset. No
 external benchmark, and therefore no long-tail claim in the title, abstract or
 conclusions. Two detection cells are recorded as diverged rather than scored.
