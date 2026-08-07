@@ -62,7 +62,13 @@ best_run() {
 }
 
 seed_arm() {
-  local seed="$1" tag="S0_s${seed}"
+  # NOTE: separate assignments. `local a="$1" b="${a}x"` does not work --
+  # the shell expands every word on the line before `local` binds anything, so
+  # b would be built from an empty a. That silently produced one shared arm
+  # name for both seeds, which would have collided into a single report and
+  # yielded no variance estimate at all.
+  local seed="$1"
+  local tag="S0_s${seed}"
   local report="reports/ablation_${tag}_valid_segm"
   [ -f "${report}.json" ] && { echo "[$(stamp)] $tag already scored"; return 0; }
   local NAME="abl_${tag}" info n dir
