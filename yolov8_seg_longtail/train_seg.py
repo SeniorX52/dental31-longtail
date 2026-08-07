@@ -131,9 +131,77 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
         super().__init__(model, tal_topk, tal_topk2)
         self.boundary_weight = float(getattr(model, "boundary_weight", 0.0))
         self.mask_aux = str(getattr(model, "mask_aux", "band") or "band")
+        self.coeff_weight = float(getattr(model, "coeff_weight", 0.0))
+        self.coeff_ridge = float(getattr(model, "coeff_ridge", 1e-3))
+
+    def oracle_coefficients(self, gt_mask, proto, boxes):
+        """Closed-form best coefficients for these masks on these prototypes.
+
+        The mask deficit on this corpus was attributed by
+        `tools/oracle_coefficients.py`: of the 0.1994 Dice gap between what the
+        model achieves and what its prototype grid allows, 0.0304 is basis
+        expressiveness and **0.1690 -- 85 percent -- is the coefficient head
+        failing to locate the right point in a basis that already spans the
+        shapes**.
+
+        Every loss tried before this one supervises in PIXEL space, so the
+        gradient reaching the coefficients has to travel back through the
+        prototype product. This supervises the coefficients directly, against a
+        teacher that is exact and free:
+
+            c* = (P P^T + lam I)^-1 P y
+
+        with y the ground truth mapped to {-1, +1}. The prototypes are detached,
+        so this term trains the coefficient head only and cannot degenerate by
+        moving the basis to meet the prediction.
+
+        One 32x32 solve is shared across every instance in the image, because
+        they share the prototype stack; only the right-hand side differs.
+        """
+        with torch.no_grad():
+            nm, h, w = proto.shape
+            P = proto.detach().float().reshape(nm, -1)                # (32, HW)
+            y = 2.0 * gt_mask.float().reshape(gt_mask.shape[0], -1) - 1.0
+            n = y.shape[0]
+
+            # Box restriction, and it is NOT an optimisation. Solved over the
+            # whole image the objective is dominated by background: an instance
+            # covers a percent or two of the pixels, so "predict -1 everywhere"
+            # beats any reconstruction and c* collapses. Measured on the trained
+            # model, the unrestricted solve reaches Dice 0.0008 against 0.96 for
+            # the box-restricted one. The box is also what the mask loss itself
+            # scores, since ultralytics crops the predicted mask to the same box.
+            ys = torch.arange(h, device=P.device, dtype=torch.float32)
+            xs = torch.arange(w, device=P.device, dtype=torch.float32)
+            bx = boxes.float()
+            # same convention as ultralytics crop_mask: inclusive low, exclusive
+            # high, so the solve covers exactly the pixels the BCE is scored on
+            inx = (xs[None, :] >= bx[:, 0:1]) & (xs[None, :] < bx[:, 2:3])
+            iny = (ys[None, :] >= bx[:, 1:2]) & (ys[None, :] < bx[:, 3:4])
+            B = (iny[:, :, None] & inx[:, None, :]).reshape(n, -1).float()
+
+            eye = self.coeff_ridge * torch.eye(nm, device=P.device)
+            out = []
+            for i in range(0, n, 8):          # chunked: (k, 32, HW) is the peak
+                b = B[i:i + 8]
+                PB = P[None] * b[:, None]                             # (k,32,HW)
+                A = PB @ P.T + eye                                    # (k,32,32)
+                r = (PB * y[i:i + 8, None]).sum(-1)                   # (k,32)
+                try:
+                    out.append(torch.linalg.solve(A, r[..., None])[..., 0])
+                except Exception:
+                    out.append(torch.linalg.lstsq(A, r[..., None]).solution[..., 0])
+            return torch.cat(out).to(gt_mask.dtype)
 
     def single_mask_loss(self, gt_mask, pred, proto, xyxy, area):
         pred_mask = torch.einsum("in,nhw->ihw", pred, proto)
+        if self.coeff_weight > 0 and gt_mask.numel():
+            c_star = self.oracle_coefficients(gt_mask, proto, xyxy)
+            # mean over coefficients, summed over instances, so the scale does
+            # not drift with the number of prototypes or the instance count
+            coeff_loss = F.mse_loss(pred.float(), c_star.float(),
+                                    reduction="none").mean(dim=1).sum()
+            self._coeff_accum = getattr(self, "_coeff_accum", 0.0) + float(coeff_loss.detach())
         bce = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
         loss = (crop_mask(bce, xyxy).mean(dim=(1, 2)) / area).sum()
         if self.boundary_weight > 0 and self.mask_aux != "none":
@@ -157,6 +225,8 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
                 fn = comparator_losses.get_aux_loss(self.mask_aux)
                 aux = fn(crop_mask(p, xyxy), crop_mask(gt_mask, xyxy))
             loss = loss + self.boundary_weight * aux.sum()
+        if self.coeff_weight > 0 and gt_mask.numel():
+            loss = loss + self.coeff_weight * coeff_loss
         return loss
 
 
@@ -292,6 +362,39 @@ class P2ProtoSegModel(LongTailSegModel):
         return x
 
 
+def widen_coefficient_head(model, width: int) -> None:
+    """Widen the mask-coefficient branch `cv4` of the Segment head.
+
+    `cv4` is the branch that turns features into the 32 prototype coefficients,
+    and the oracle fit attributes 85 percent of the mask deficit to it. Stock
+    ultralytics sizes its hidden layer as `max(ch[0] // 4, nm)`, which on this
+    model is 80 channels -- a default chosen for the COCO configuration, never
+    tuned for anything. The whole branch holds 1.33 M parameters against 2.26 M
+    in the prototype head and 7.41 M in the classifier, so the smallest head in
+    the model carries the largest share of the error.
+
+    This is the capacity control for the distillation arm. If widening alone
+    closes much of the gap the problem is capacity; if only distillation moves
+    it, the problem is supervision. Run together they read as a 2x2.
+
+    The branch is rebuilt, so it starts from scratch while the rest of the head
+    keeps whatever it was loaded with.
+    """
+    head = model.model[-1]
+    in_ch = [seq[0].conv.in_channels for seq in head.cv4]
+    before = sum(p.numel() for p in head.cv4.parameters())
+    dev = next(head.cv4.parameters()).device
+    dtype = next(head.cv4.parameters()).dtype
+    head.cv4 = torch.nn.ModuleList(
+        torch.nn.Sequential(Conv(c, width, 3), Conv(width, width, 3),
+                            torch.nn.Conv2d(width, head.nm, 1))
+        for c in in_ch).to(device=dev, dtype=dtype)
+    after = sum(p.numel() for p in head.cv4.parameters())
+    print("coefficient head cv4 widened: hidden %d -> %d channels, "
+          "%.2f M -> %.2f M parameters (rebuilt, not loaded)"
+          % (max(in_ch[0] // 4, head.nm), width, before / 1e6, after / 1e6))
+
+
 class LongTailSegTrainer(SegmentationTrainer):
     """SegmentationTrainer that builds LongTailSegModel and attaches the
     class-balance / boundary knobs before the criterion is created."""
@@ -301,13 +404,19 @@ class LongTailSegTrainer(SegmentationTrainer):
                  boundary_weight: float = 0.0,
                  mask_aux: str = "band",
                  proto_scale: int = 4,
-                 proto_src: str = "p3"):
+                 proto_src: str = "p3",
+                 coeff_weight: float = 0.0,
+                 coeff_ridge: float = 1e-3,
+                 coeff_width: int = 0):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
         self._lt_boundary_weight = boundary_weight
         self._lt_mask_aux = mask_aux
         self._lt_proto_scale = proto_scale
         self._lt_proto_src = proto_src
+        self._lt_coeff_weight = coeff_weight
+        self._lt_coeff_ridge = coeff_ridge
+        self._lt_coeff_width = coeff_width
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         cls = (P2ProtoSegModel if getattr(self, "_lt_proto_src", "p3") == "p2"
@@ -322,6 +431,10 @@ class LongTailSegTrainer(SegmentationTrainer):
             model.class_weights = self._lt_class_weights
         model.boundary_weight = self._lt_boundary_weight
         model.mask_aux = self._lt_mask_aux
+        model.coeff_weight = getattr(self, "_lt_coeff_weight", 0.0)
+        model.coeff_ridge = getattr(self, "_lt_coeff_ridge", 1e-3)
+        if getattr(self, "_lt_coeff_width", 0):
+            widen_coefficient_head(model, self._lt_coeff_width)
         if getattr(self, "_lt_proto_src", "p3") == "p2":
             head = model.model[-1]
             p2_ch = model.model[P2ProtoSegModel.P2_INDEX].cv2.conv.out_channels
@@ -388,6 +501,19 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "share of instances that cannot reach IoU 0.75 from "
                          "17.7%% to 5.4%% (see tools/mask_resolution_ceiling.py). "
                          "Automatically sets mask_ratio to match.")
+    ap.add_argument("--coeff-weight", type=float, default=0.0,
+                    help="weight on the coefficient-distillation term. The mask "
+                         "deficit is 85 %% coefficient head and 15 %% basis, so "
+                         "this supervises the coefficients directly against the "
+                         "closed-form optimum on the model's own prototypes "
+                         "instead of relying on gradient reaching them through "
+                         "the prototype product. 0 disables.")
+    ap.add_argument("--coeff-ridge", type=float, default=1e-3,
+                    help="ridge term in the closed-form coefficient solve")
+    ap.add_argument("--coeff-width", type=int, default=0,
+                    help="rebuild the cv4 coefficient branch with this hidden "
+                         "width (stock is 80). Capacity control for "
+                         "--coeff-weight. 0 leaves the head alone.")
     ap.add_argument("--mask-aux", default="band",
                     choices=["none", "band", "dice", "tversky",
                              "focal_tversky", "kervadec"],
@@ -456,7 +582,10 @@ def main(argv: Optional[List[str]] = None) -> None:
                                  boundary_weight=args.boundary_weight,
                                  mask_aux=args.mask_aux,
                                  proto_scale=args.proto_scale,
-                                 proto_src=args.proto_src)
+                                 proto_src=args.proto_src,
+                                 coeff_weight=args.coeff_weight,
+                                 coeff_ridge=args.coeff_ridge,
+                                 coeff_width=args.coeff_width)
     trainer.train()
 
 
