@@ -41,8 +41,10 @@ def main() -> int:
 
     try:
         from yolov8_seg_longtail.train_seg import (  # noqa: E402
-            BoundaryAwareSegLoss, LongTailSegModel, LongTailSegTrainer)
-        for cls in (LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer):
+            BoundaryAwareSegLoss, HighResProto, LongTailSegModel,
+            LongTailSegTrainer, P2Proto, P2ProtoSegModel)
+        for cls in (LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer,
+                    P2ProtoSegModel, P2Proto, HighResProto):
             setattr(__main__, cls.__name__, cls)
     except Exception as exc:                      # pragma: no cover
         print("could not register pickled classes: %s" % exc, file=sys.stderr)

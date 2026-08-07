@@ -104,8 +104,10 @@ def main() -> None:
     import __main__
     try:
         from yolov8_seg_longtail.train_seg import (  # noqa: F401
-            LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer)
-        for _cls in (LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer):
+            LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer,
+            P2ProtoSegModel, P2Proto, HighResProto)
+        for _cls in (LongTailSegModel, BoundaryAwareSegLoss, LongTailSegTrainer,
+                     P2ProtoSegModel, P2Proto, HighResProto):
             setattr(__main__, _cls.__name__, _cls)
     except Exception as _e:                      # stock checkpoints don't need it
         print("note: long-tail classes not registered (%s)" % _e)

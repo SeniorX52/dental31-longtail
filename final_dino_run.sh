@@ -63,6 +63,8 @@ for p in glob.glob("reports/dino_abl_*_valid_bbox.json"):
     m = json.load(open(p))["coco_stats"]["mAP"]
     if m > best:
         best, name = m, a
+# D5 was the pre-registered method and it failed badly; it is still evaluated
+# so the negative result is reported on test rather than quietly dropped.
 out = ["D5"] + ([name] if name and name != "D5" else [])
 print(" ".join(out))
 PY
@@ -82,6 +84,11 @@ ARM_OPTS = {
  "L1": "lt_la_cost=True lt_freq_dn=True",
  "L2": "lt_la_loss=True lt_freq_dn=True",
  "L3": "lt_la_loss=True lt_la_cost=True",
+ "T05": "lt_la_loss=True lt_la_cost=True lt_freq_dn=True lt_tau=0.5",
+ "T025": "lt_la_loss=True lt_la_cost=True lt_freq_dn=True lt_tau=0.25",
+ # CRT ships a retrained classifier inside its own checkpoint; nothing is
+ # switched on at inference, so it needs no options at all
+ "CRT": "",
 }'
 
 for ARM in $CANDS; do

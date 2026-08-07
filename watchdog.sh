@@ -94,9 +94,13 @@ elif [ ! -f reports/ablation_S4_valid_segm.json ]; then
 elif [ ! -f reports/final_seg_test_segm.json ]; then
   log "stage 3 (P2 final) down, relaunching"
   setsid nohup bash final_seg_run.sh >> logs/final_seg.log 2>&1 < /dev/null &
-elif [ ! -f reports/dino_abl_D2_valid_bbox.json ] \
-  || [ ! -f reports/dino_abl_D3_valid_bbox.json ] \
-  || [ ! -f reports/dino_abl_D6_valid_bbox.json ] \
+# D2 and D3 are deliberately NOT gated on. Both diverge at tau=1.0 with inf and
+# NaN cost matrices in the Hungarian matcher, reproducibly, and that divergence
+# IS their recorded result -- the tau sweep since showed the failure is
+# monotonic in tau and the published default sits far outside its validated
+# regime for a 34,320:1 imbalance. Relaunching them only re-establishes a known
+# outcome and takes the GPU from work that still has something to measure.
+elif [ ! -f reports/dino_abl_D6_valid_bbox.json ] \
   || [ ! -f reports/dino_abl_D7_valid_bbox.json ] \
   || [ ! -f reports/dino_abl_C1_valid_bbox.json ]; then
   # stage 4 = the FROZEN detection matrix D1..D7 + the class-balanced control
