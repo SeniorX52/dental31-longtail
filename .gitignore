@@ -75,3 +75,6 @@ PROJECT_OVERVIEW.md
 
 # Runtime pause switch for watchdog.sh -- machine state, not source
 PAUSE
+data_frac25/
+data_frac50/
+data_frac75/
