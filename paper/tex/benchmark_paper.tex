@@ -39,8 +39,18 @@ higher-resolution head with 878{,}432 \emph{fewer} parameters performs
 per-model subsets invert their own sign once compared on the intersection of
 scored cases. \textbf{(5)} Group means over low-support classes fabricate
 results: in one case 98\,\% of a $+0.53$\,pp mAP gain came from a single class
-with \emph{two} test instances. \textbf{(6)} The published logit-adjustment
-constant does not transfer from $\sim$100:1 to 34{,}320:1 imbalance.
+with \emph{two} test instances. \textbf{(6)} Segmentation AP is a conjunction of
+detection and mask quality, and the largest gain we measured, $+0.64$\,pp, is
+entirely detection-side: the same predictions scored as boxes gain
+\emph{more}, $+0.74$\,pp, from a change to a branch with no path to the box
+head. \textbf{(7)} The published logit-adjustment constant does not transfer
+from $\sim$100:1 to 34{,}320:1 imbalance.
+
+A closed-form oracle fit attributes 85\,\% of the mask deficit to coefficient
+prediction rather than to the learned basis. Acting on that attribution fails in
+both available directions---capacity leaves masks unchanged, and direct
+coefficient supervision makes them worse---so the deficit is correctly localised
+and not thereby actionable.
 \end{abstract}
 
 \section{Introduction}
@@ -235,7 +245,7 @@ the check that establishes this---comparing achieved performance against the
 ceiling---costs one line of arithmetic. We ran it after the experiment. It
 should be run before.
 
-\section{Two Metric Failures That Produce Confident Wrong Answers}
+\section{Three Metric Failures That Produce Confident Wrong Answers}
 
 \subsection{Distance Metrics on Per-Model Subsets}
 
@@ -296,6 +306,50 @@ on 18 classes with ${\ge}10$ instances & 6 improve, 12 worsen \\
 \paragraph{Protocol.} Report per-class deltas with support counts alongside any
 group mean, and state the result restricted to classes with adequate support. A
 group AP over classes with single-digit support is not a measurement.
+
+\subsection{Segmentation AP Is a Conjunction, and Rises on Detection Alone}
+\label{sec:conjunction}
+
+The largest single gain in this study is $+0.64$\,pp of segmentation mAP, from
+widening the mask-coefficient branch \texttt{cv4} from 80 to 256 hidden channels
+($0.29\to3.86$\,M parameters in the branch, nothing else changed). Against a
+measured noise floor of $\pm0.21$\,pp it clears the threshold threefold, and
+tail AP nearly triples, from 0.0101 to 0.0297. Reported as it stands it is the
+one positive architectural result in the work.
+
+It is not a mask result. Scoring the \emph{same} predictions as boxes instead of
+masks gives $+0.74$\,pp, \emph{larger} than the segmentation gain.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrr}
+\toprule
+arm & segm mAP & $\Delta$ & box mAP & $\Delta$ \\
+\midrule
+reference & 0.1055 & --- & 0.1551 & --- \\
+\textbf{cv4 widened} & \textbf{0.1118} & $\mathbf{+0.64}$ & 0.1625 & $\mathbf{+0.74}$ \\
+\bottomrule
+\end{tabular}
+\caption{The same predictions, scored two ways. \texttt{cv4} emits mask
+coefficients and has no path to the box head, so the gain cannot originate
+there.}
+\end{table}
+
+Segmentation AP is a conjunction: an instance counts only if the detection
+matches \emph{and} the mask clears the IoU threshold. A change that improves
+only the detector therefore raises it while leaving masks untouched. Paired on
+the 5352 cases where both models emit a mask, Dice moves $-0.0016$ with the
+interval spanning zero, and the one metric separable from zero is boundary
+F at $-0.0043$---in favour of the \emph{reference}. Rebuilding the branch with
+three times the parameters perturbs the gradients returning into the shared
+neck; the detector improves as a side effect, and the masks it was meant to fix
+do not.
+
+\paragraph{Protocol.} Any claim that an architectural change improved
+segmentation must report the same predictions scored as boxes. If the box delta
+is comparable to or larger than the mask delta, the change is not a mask result
+whatever the segmentation AP says. This costs one extra evaluation pass and is
+the only cheap way to separate the two factors the metric multiplies together.
 
 \section{Results}
 
@@ -400,6 +454,37 @@ The head capacities make this concrete. In YOLOv8x-seg the coefficient branch
 bottlenecks 320 to 80 channels and carries 1.33\,M parameters, against 2.26\,M
 for the prototype generator and 7.41\,M for classification. The smallest of the
 three heads is responsible for 85\,\% of the mask deficit.
+
+\subsection{The Attribution Is Correct and Not Actionable}
+
+A localisation earns its keep by telling you what to change, so we tested both
+things it implies. Capacity: the coefficient branch rebuilt from 80 to 256
+hidden channels. Supervision: an auxiliary term pulling the predicted
+coefficients toward $\mathbf{c}^{*}$ itself, recomputed each step from the
+model's own prototypes and detached.
+
+Neither improves masks. The capacity arm is the $+0.64$\,pp result of
+Section~\ref{sec:conjunction}, which the box control shows to be
+detection-side; on the paired common set its masks are flat, and the only
+separable contour metric favours the reference. The supervision arm is
+$-0.70$\,pp with paired Dice $-0.0017$, and its own pixel BCE at epoch 50 is
+roughly 3.05 against the reference's 1.65: the auxiliary term pulled the head
+away from the pixel optimum rather than toward it. A scale mismatch would be the
+natural explanation and is not the right one---target and prediction agree to
+within 3\,\% in RMS. The coefficients minimising pixel BCE and those best
+reconstructing the mask in least squares are different points.
+
+\paragraph{A calibration failure worth recording.} The first supervision run was
+numerically broken and still produced a publishable-looking number. The
+normal-equation matrix $A=PBP^{\top}$ has eigenvalues spanning $10^{-6}$ to
+$10^{3}$ on real instances, so a fixed ridge regularises some and leaves others
+singular; training loss reached $7.2\times10^{7}$ with NaN at epoch 10, and the
+arm still reported mAP 0.1106. The weight had been calibrated on the
+\emph{converged} model, where $\overline{\mathbf{c}^{*2}}=2.86$, then applied to
+a run starting from COCO weights where it measures 4 to 53. Calibrating a
+hyper-parameter on a model state the run never occupies is its own failure mode,
+and a loss curve is the cheapest detector of it: the metric alone looked
+unremarkable.
 
 \section{Noise Floor (Measured)}
 

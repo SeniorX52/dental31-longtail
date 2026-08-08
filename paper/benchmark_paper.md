@@ -229,7 +229,7 @@ should be run before.
 
 ---
 
-## 5. Two metric failures that produce confident wrong answers
+## 5. Three metric failures that produce confident wrong answers
 
 ### 5.1 Distance metrics conditioned on per-model subsets
 
@@ -382,6 +382,59 @@ branch bottlenecks 320 to 80 channels and carries 1.33 M parameters, against
 of the three heads is the one responsible for 85 % of the mask deficit.
 
 ---
+
+## The attribution is correct and not actionable
+
+A localisation earns its keep by telling you what to change, so we tested both
+things it implies. Capacity: the coefficient branch rebuilt from 80 to 256 hidden
+channels. Supervision: an auxiliary term pulling the predicted coefficients
+toward `c*` itself, recomputed each step from the model's own prototypes and
+detached.
+
+Neither improves masks.
+
+| arm | segm mAP | delta | box mAP | delta |
+|---|---|---|---|---|
+| reference | 0.1055 | - | 0.1551 | - |
+| **cv4 widened** | **0.1118** | **+0.64** | 0.1625 | **+0.74** |
+| coefficient supervision | 0.0985 | -0.70 | 0.1542 | -0.09 |
+
+The capacity arm gives the largest single gain in this study, +0.64 pp against a
++-0.21 pp noise floor, with tail AP nearly tripling from 0.0101 to 0.0297.
+Reported as it stands it is the one positive architectural result in the work.
+
+It is not a mask result. Scoring the **same** predictions as boxes gives
++0.74 pp, larger than the segmentation gain, and `cv4` emits mask coefficients
+with no path to the box head. Segmentation AP is a conjunction: an instance
+counts only if the detection matches **and** the mask clears the IoU threshold,
+so a change that improves only the detector raises it while leaving masks
+untouched. Paired on the 5352 cases where both models emit a mask, Dice moves
+-0.0016 with the interval spanning zero, and the one metric separable from zero
+is boundary F at -0.0043, in favour of the reference.
+
+The supervision arm is -0.70 pp with paired Dice -0.0017, and its own pixel BCE
+at epoch 50 is roughly 3.05 against the reference's 1.65: the auxiliary term
+pulled the head away from the pixel optimum rather than toward it. Target and
+prediction agree to within 3 % in RMS, so this is not a scale mismatch. The
+coefficients minimising pixel BCE and those best reconstructing the mask in least
+squares are different points.
+
+**Protocol.** Any claim that an architectural change improved segmentation must
+report the same predictions scored as boxes. If the box delta is comparable to or
+larger than the mask delta, the change is not a mask result whatever the
+segmentation AP says.
+
+### A calibration failure worth recording
+
+The first supervision run was numerically broken and still produced a
+publishable-looking number. `A = P B P^T` has eigenvalues spanning 1e-6 to 1e3 on
+real instances, so a fixed ridge regularises some and leaves others singular;
+training loss reached 7.2e7 with NaN at epoch 10, and the arm still reported mAP
+0.1106. The weight had been calibrated on the **converged** model, where mean
+`c*^2` is 2.86, then applied to a run starting from COCO weights where it
+measures 4 to 53. Calibrating a hyper-parameter on a model state the run never
+occupies is its own failure mode, and the loss curve is the cheapest detector of
+it: the metric alone looked unremarkable.
 
 ## Noise floor (measured)
 

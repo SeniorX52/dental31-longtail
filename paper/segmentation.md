@@ -246,7 +246,7 @@ says so. Representation is not what limits this model; learning is.
 
 ---
 
-## 6. Two evaluation failures worth documenting
+## 6. Evaluation failures worth documenting
 
 Both produced confident, plausible, wrong answers.
 
@@ -360,6 +360,92 @@ of the three heads is the one responsible for 85 % of the mask deficit.
 
 ---
 
+## Acting on the attribution: both routes fail
+
+An attribution is only useful if it is actionable, so we tested the two things it
+implies. If the coefficient head is the constraint, it either lacks the
+**capacity** to express the mapping or lacks a training **signal** that reaches
+it. Every objective tried earlier supervises in pixel space, where the gradient
+must travel back through the prototype product to reach the coefficients at all.
+
+**Capacity (K2).** The coefficient branch `cv4` is rebuilt with its hidden width
+raised from 80 to 256 channels, 0.29 to 3.86 M parameters in the branch. Nothing
+else changes.
+
+**Supervision (K1b).** An auxiliary term supervises the coefficients directly
+against the closed-form optimum `c*`, recomputed each step from the model's own
+prototypes and detached so the basis cannot move to meet the prediction, as a
+relative error `||c_pred - c*||^2 / ||c*||^2`.
+
+### A numerical caution that is part of the result
+
+The first implementation used a fixed ridge 1e-3 in the solve for `c*`. The
+normal-equation matrix `A = P B P^T` is built from learned features restricted to
+one instance box, and on COCO-pretrained prototypes over real instances its
+eigenvalues span 1e-6 to 1e3, with the smallest slightly negative from rounding.
+A fixed ridge regularises some instances and leaves others singular, and one
+singular instance out of 95,745 annotations is enough. Training loss ran 1.8e5 at
+epoch 1, NaN by epoch 10 and 7.2e7 by epoch 40, against 2.9 falling to 1.6
+without the term. The arm still produced a plausible-looking mAP of 0.1106, which
+measures the defect and not the method.
+
+The weight had been calibrated on the **converged** reference model, where mean
+`c*^2` is 2.86; on a run initialised from COCO weights the same quantity measures
+4 to 53 with a far heavier tail. Making the ridge relative to `trace(A)/n` bounds
+the condition number by construction and removes the failure. The results below
+use that form.
+
+| arm | segm mAP | delta | box mAP | delta | tail |
+|---|---|---|---|---|---|
+| S0 reference | 0.1055 | - | 0.1551 | - | 0.0101 |
+| K1b supervision | 0.0985 | -0.70 | 0.1542 | -0.09 | 0.0039 |
+| **K2 capacity** | **0.1118** | **+0.64** | 0.1625 | +0.74 | 0.0297 |
+
+Validation, 50 epochs, seed 42, otherwise identical to the reference. Deltas in
+percentage points. K2 is the largest gain of any arm in this study and exceeds
+the +-0.21 pp noise floor threefold.
+
+### K2's gain is not a mask gain
+
+Scoring the **same** predictions as boxes rather than masks gives +0.74 pp,
+**larger** than the +0.64 pp segmentation gain. `cv4` emits mask coefficients and
+has no path to the box head, so the improvement cannot originate there:
+rebuilding the branch with three times the parameters perturbs the gradients
+returning into the shared neck, and the detector, not the mask, is what improves.
+Because segmentation AP requires a correct detection **and** a correct mask,
+better detection lifts it even when masks are unchanged.
+
+| metric | S0 | K2 | difference (95 % CI) |
+|---|---|---|---|
+| Dice | 0.7043 | 0.7028 | -0.0016 [-0.0043, +0.0013] |
+| IoU | 0.5784 | 0.5770 | -0.0014 [-0.0041, +0.0019] |
+| boundary F | 0.7971 | 0.7928 | **-0.0043** [-0.0077, -0.0007] |
+| HD95 (px) | 64.15 | 63.95 | -0.20 [-2.65, +2.11] |
+| ASSD (px) | 17.80 | 17.62 | -0.18 [-0.88, +0.49] |
+
+Paired on the same 5352 cases, 500-resample image-level bootstrap. Only boundary
+F is separable from zero, and it favours the **reference**. An arm can gain
+0.64 pp of segmentation AP while its masks get no better.
+
+### K1b fails on its merits
+
+With the target numerically sound the arm is a fair test, and it is negative:
+-0.70 pp, paired Dice -0.0017 and not separable. The mechanism is visible in the
+loss. At epoch 50 K1b's total segmentation loss is 5.05 against the reference's
+1.65; the auxiliary term is capped at 2.0 by its clip, so K1b's own pixel BCE is
+roughly 3.05 against 1.65. The term did not help the head find the pixel optimum,
+it pulled the head away from it.
+
+A scale mismatch would be the obvious explanation and is not the correct one: the
+oracle target and the head's own coefficients agree to within 3 % in RMS, 0.473
+against 0.460. The coefficients that minimise pixel BCE and those that best
+reconstruct the mask in least squares are simply different points, and moving
+toward the second costs the first.
+
+**Consequence.** The attribution is a correct *localisation* and not an
+actionable one. The coefficient head is where the error lives, and it is short of
+neither parameters nor a direct training signal.
+
 ## Noise floor (measured)
 
 The reference configuration was trained at three seeds, everything else
@@ -395,8 +481,16 @@ Three consequences, and they are not all the same verdict:
 ## 8. Conclusion
 
 On this corpus, boundary-aware and class-balanced training objectives do not
-improve instance segmentation beyond seed-level variation. We report this as the
-result rather than selecting the metric and split on which it appears otherwise.
+improve instance segmentation beyond seed-level variation, and neither does
+acting on the one place the deficit was traced to. We report this as the result
+rather than selecting the metric and split on which it appears otherwise.
+
+The two arms of "Acting on the attribution" are the sharpest statement of it.
+Handed optimal coefficients the model jumps from Dice 0.70 to 0.87, so the head
+is demonstrably the constraint; given three times the parameters it produces the
+same masks, and given the optimal coefficients as an explicit target it produces
+worse ones. Whatever limits this head is not capacity and not the absence of a
+signal pointing at the right answer.
 
 What the work establishes instead:
 

@@ -21,14 +21,19 @@ We evaluate boundary-aware and class-balanced training objectives for instance
 segmentation on a 31-class panoramic dental radiograph corpus, and report that
 none improves on a tuned stock baseline once per-class contributions are
 decomposed. The result is not a null for want of trying: seven ablation cells at
-matched budget, four published comparator losses, a second backbone, an
-architectural change to the mask head, and a downstream clinical endpoint all
-land within seed-level spread. Three things make the null informative. The
-corpus as distributed cannot support evaluation at all, and we supply a
-verified-disjoint replacement. We measure the ceiling the mask representation
-imposes, independent of any model. And we show that ceiling is \emph{not} the
-binding constraint, which correctly predicts the failure of a higher-resolution
-mask head.
+matched budget, two backbones, three architectural changes to the mask head, and
+a downstream clinical endpoint all land within seed-level spread. Four things
+make the null informative. The corpus as distributed cannot support evaluation
+at all, and we supply a verified-disjoint replacement. We measure the ceiling
+the mask representation imposes, independent of any model, and show that ceiling
+is \emph{not} the binding constraint---which correctly predicts the failure of a
+higher-resolution mask head. A closed-form oracle fit then attributes 85\,\% of
+the mask deficit to coefficient prediction rather than representation. And
+acting on that attribution fails in both available directions: tripling the
+coefficient head's capacity leaves masks unchanged while improving the detector
+by accident, and supervising the coefficients directly against their closed-form
+optimum makes masks worse. The deficit is correctly localised and not thereby
+actionable.
 \end{abstract}
 
 \section{The Corpus Cannot Be Evaluated as Distributed}
@@ -173,6 +178,15 @@ bootstrapped over images, HD95 is $+2.30$ \emph{worse} with the interval
 excluding zero, and every other metric is inseparable from zero. Correcting the
 denominator inverted the sign.
 
+A second failure has the opposite shape and is reported in
+Section~\ref{sec:acting}: an arm gains $+0.64$\,pp of segmentation AP, the
+largest gain in this study, while its masks do not improve at all. Segmentation
+AP is a conjunction---a correct detection \emph{and} a correct mask---so a
+change that helps only the detector raises it without touching mask quality.
+Scoring the same predictions as boxes separates the two, and here the box gain
+is the larger of the pair. Neither failure is exotic; both are the default
+reading of a standard metric.
+
 \section{Clinical Endpoint}
 
 Endpoint: bone-loss area as a percentage of image area. Distance-based and
@@ -245,6 +259,113 @@ bottlenecks 320 to 80 channels and carries 1.33\,M parameters, against 2.26\,M
 for the prototype generator and 7.41\,M for classification. The smallest of the
 three heads is responsible for 85\,\% of the mask deficit.
 
+\section{Acting on the Attribution: Both Routes Fail}
+\label{sec:acting}
+
+An attribution is only useful if it is actionable, so we tested the two things
+it implies. If the coefficient head is the constraint, then either it lacks the
+\emph{capacity} to express the mapping, or it lacks a training \emph{signal}
+that reaches it. Every objective tried earlier supervises in pixel space, where
+the gradient must travel back through the prototype product to reach the
+coefficients at all.
+
+\paragraph{Capacity (K2).} The coefficient branch \texttt{cv4} is rebuilt with
+its hidden width raised from 80 to 256 channels, $0.29\to3.86$\,M parameters in
+the branch. Nothing else changes.
+
+\paragraph{Supervision (K1b).} An auxiliary term supervises the coefficients
+directly against the closed-form optimum $\mathbf{c}^{*}$ of the previous
+section, recomputed each step from the model's own prototypes and detached, so
+the basis cannot move to meet the prediction:
+\begin{equation}
+\mathcal{L}_{\text{coeff}}
+ = \frac{\lVert \mathbf{c}_{\text{pred}} - \mathbf{c}^{*}\rVert^{2}}
+        {\lVert \mathbf{c}^{*}\rVert^{2} + \varepsilon}.
+\end{equation}
+
+\paragraph{A numerical caution that is part of the result.} The first
+implementation used a fixed ridge $\lambda=10^{-3}$ in the solve for
+$\mathbf{c}^{*}$. The normal-equation matrix $A = PBP^{\top}$ is built from
+learned features restricted to one instance box, and on COCO-pretrained
+prototypes over real instances its eigenvalues span $10^{-6}$ to $10^{3}$, with
+the smallest slightly negative from rounding. A fixed ridge regularises some
+instances and leaves others singular; one singular instance out of 95{,}745
+annotations is enough. Training loss ran $1.8\times10^{5}$ at epoch~1, NaN by
+epoch~10 and $7.2\times10^{7}$ by epoch~40, against 2.9 falling to 1.6 without
+the term. The arm still produced a plausible-looking mAP of 0.1106, which
+measures the defect and not the method. The weight had been calibrated on the
+\emph{converged} reference model, where $\overline{\mathbf{c}^{*2}}=2.86$; on a
+run initialised from COCO weights the same quantity measures 4 to 53 with a far
+heavier tail. Making the ridge relative to $\operatorname{tr}(A)/n$ bounds the
+condition number by construction and removes the failure; the results below use
+that form.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrr}
+\toprule
+arm & segm mAP & $\Delta$ & box mAP & $\Delta$ & tail \\
+\midrule
+S0 reference & 0.1055 & --- & 0.1551 & --- & 0.0101 \\
+K1b supervision & 0.0985 & $-0.70$ & 0.1542 & $-0.09$ & 0.0039 \\
+\textbf{K2 capacity} & \textbf{0.1118} & $\mathbf{+0.64}$ & 0.1625 & $+0.74$ & 0.0297 \\
+\bottomrule
+\end{tabular}
+\caption{Validation, 50 epochs, seed 42, otherwise identical to the reference.
+Deltas in percentage points. K2 is the largest gain of any arm in this study and
+exceeds the $\pm0.21$\,pp noise floor threefold.}
+\label{tab:kk}
+\end{table}
+
+\paragraph{K2's gain is not a mask gain.} Scoring the \emph{same} predictions as
+boxes rather than masks gives $+0.74$\,pp, \emph{larger} than the $+0.64$\,pp
+segmentation gain. \texttt{cv4} emits mask coefficients and has no path to the
+box head, so the improvement cannot originate there: rebuilding the branch with
+three times the parameters perturbs the gradients returning into the shared
+neck, and the detector, not the mask, is what improves. Because segmentation AP
+requires a correct detection \emph{and} a correct mask, better detection lifts
+it even when masks are unchanged. Paired on the 5352 cases where both models
+emit a mask (Table~\ref{tab:kkpaired}) the masks are flat to worse, and the one
+separable metric is negative.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrl}
+\toprule
+metric & S0 & K2 & difference (95\,\% CI) \\
+\midrule
+Dice & 0.7043 & 0.7028 & $-0.0016$ $[-0.0043,+0.0013]$ \\
+IoU & 0.5784 & 0.5770 & $-0.0014$ $[-0.0041,+0.0019]$ \\
+boundary F & 0.7971 & 0.7928 & $\mathbf{-0.0043}$ $[-0.0077,-0.0007]$ \\
+HD95 (px) & 64.15 & 63.95 & $-0.20$ $[-2.65,+2.11]$ \\
+ASSD (px) & 17.80 & 17.62 & $-0.18$ $[-0.88,+0.49]$ \\
+\bottomrule
+\end{tabular}
+\caption{Paired on the same 5352 cases, 500-resample image-level bootstrap.
+Only boundary F is separable from zero, and it favours the \emph{reference}.
+Read against Table~\ref{tab:kk}, an arm can gain 0.64\,pp of segmentation AP
+while its masks get no better.}
+\label{tab:kkpaired}
+\end{table}
+
+\paragraph{K1b fails on its merits.} With the target numerically sound the arm
+is a fair test, and it is negative: $-0.70$\,pp, paired Dice $-0.0017$ and not
+separable. The mechanism is visible in the loss. At epoch~50 K1b's total
+segmentation loss is 5.05 against the reference's 1.65; the auxiliary term is
+capped at 2.0 by its clip, so K1b's own pixel BCE is roughly 3.05 against 1.65.
+The term did not help the head find the pixel optimum, it pulled the head away
+from it. A scale mismatch would be the obvious explanation and is not the
+correct one: the oracle target and the head's own coefficients agree to within
+3\,\% in RMS (0.473 against 0.460). The coefficients that minimise pixel BCE and
+those that best reconstruct the mask in least squares are simply different
+points, and moving toward the second costs the first.
+
+\paragraph{Consequence.} The attribution is a correct \emph{localisation} and
+not an actionable one. The coefficient head is where the error lives, and it is
+short of neither parameters nor a direct training signal. Adding capacity leaves
+mask quality unchanged and improves the detector by accident; adding
+coefficient-space supervision makes masks worse.
+
 \section{Noise Floor (Measured)}
 
 The reference configuration was trained at three seeds, everything else
@@ -281,16 +402,33 @@ survive a change of split and schedule.
 \section{Conclusion and Limitations}
 
 On this corpus, boundary-aware and class-balanced objectives do not improve
-instance segmentation beyond seed-level variation. What the work establishes
-instead is that the distributed split cannot support evaluation; that perceptual
-hashing alone is not a leakage test here; that the representation ceiling is
-real but not binding; that distance metrics on per-model subsets invert their
-sign; and that anatomical position is part of the class definition in
-radiographs.
+instance segmentation beyond seed-level variation, and neither does acting on
+the one place the deficit was traced to. What the work establishes instead is
+that the distributed split cannot support evaluation; that perceptual hashing
+alone is not a leakage test here; that the representation ceiling is real but
+not binding; that the mask deficit is 85\,\% coefficient prediction, which is a
+correct localisation and an unactionable one; that distance metrics on
+per-model subsets invert their sign and segmentation AP can rise on a purely
+detection-side change; and that anatomical position is part of the class
+definition in radiographs.
 
-Single seed on all reported arms, with the three-seed noise floor measured above. Single corpus, single backbone family. No prior published results
-exist for this dataset. No long-tail claim, because the split cannot support
+The two arms of Section~\ref{sec:acting} are the sharpest statement of the
+negative result. Handed optimal coefficients the model jumps from Dice 0.70 to
+0.87, so the head is demonstrably the constraint; given three times the
+parameters it produces the same masks, and given the optimal coefficients as an
+explicit target it produces worse ones. Whatever limits this head is not
+capacity and not the absence of a signal pointing at the right answer.
+
+\paragraph{The published comparator losses did not run.} Soft Dice, Tversky,
+Focal Tversky and Kervadec's boundary loss are implemented behind a common
+interface, but the Kervadec arm failed with an in-place autograd error and the
+other three were queued behind it. The objective is therefore compared against
+the stock BCE baseline only, which is a necessary control and not a sufficient
 one.
+
+Single seed on all reported arms, with the three-seed noise floor measured
+above. Single corpus, single backbone family. No prior published results exist
+for this dataset. No long-tail claim, because the split cannot support one.
 
 {\small
 \bibliographystyle{plain}
