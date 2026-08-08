@@ -38,13 +38,20 @@ gpu_busy() {
 while gpu_busy; do sleep 60; done
 
 if ! finished "$TAG"; then
+  # Resume if an interrupted run left a checkpoint; a fresh start would
+  # otherwise reinitialise from S0 and silently discard the finished epochs.
+  RESUME=()
+  if [ -f "runs/segment/$TAG/weights/last.pt" ]; then
+    RESUME=(--resume "runs/segment/$TAG/weights/last.pt")
+    echo "[$(stamp)] found last.pt, resuming in place"
+  fi
   echo "[$(stamp)] === $TAG: S0 weights, imgsz 1280, 25 epochs ==="
   python yolov8_seg_longtail/train_seg.py \
       --data "$PWD/data_clean/data.yaml" \
       --model runs/segment/abl_S0/weights/best.pt --nc 31 \
       --epochs 25 --imgsz 1280 --batch 2 --seed 42 \
       --channels-last --weights none --boundary-weight 0 \
-      --name "$TAG" 2>&1 | tail -20
+      --name "$TAG" "${RESUME[@]}" 2>&1 | tail -20
 fi
 
 if finished "$TAG"; then
