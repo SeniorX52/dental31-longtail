@@ -350,6 +350,18 @@ three times the parameters perturbs the gradients returning into the shared
 neck; the detector improves as a side effect, and the masks it was meant to fix
 do not.
 
+A second, stronger instance arrived later and in the opposite direction. A
+query-based detector (Mask DINO, R50) posts the highest segmentation mAP in
+the study, 0.1271 against the baseline's 0.1055, while \emph{every} paired
+mask-quality metric on the 5460 common cases is separably worse: Dice
+$-0.039$, IoU $-0.035$, boundary F $-0.065$, HD95 $+20.7$\,px, ASSD
+$+5.3$\,px, all with intervals excluding zero and all favouring the baseline.
+Its box mAP is also no better (0.1503 against 0.1551). The headline metric is
+lifted by ranking and recall behaviour across the score distribution, not by
+the quality of any mask it draws. Segmentation AP and mask quality therefore
+dissociate in both directions: an arm can gain AP from detection alone
+(above), and an architecture can gain AP while drawing measurably worse masks.
+
 \paragraph{Protocol.} Any claim that an architectural change improved
 segmentation must report the same predictions scored as boxes. If the box delta
 is comparable to or larger than the mask delta, the change is not a mask result

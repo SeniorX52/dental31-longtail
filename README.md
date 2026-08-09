@@ -149,7 +149,7 @@ initially none could be. What that took is in `paper/`:
 | that attribution is correct but not actionable | more capacity leaves masks unchanged; direct supervision makes them worse |
 | distance metrics on per-model subsets invert their sign | HD95 flips from −17.3 % to significantly worse |
 | group means over low-support classes fabricate results | 98 % of one gain came from a 2-instance class |
-| segmentation AP rises on a purely detection-side change | +0.64 pp mAP with masks measurably no better |
+| segmentation AP dissociates from mask quality, in both directions | +0.64 pp from detection alone; and a query-based model posts +2.16 pp while all five paired mask metrics are separably worse |
 | cross-corpus AP is meaningless at differing annotation granularity | 0.0000 AP from a 19× box-area ratio, not a failure |
 | the published logit-adjustment constant does not transfer | +11.47 logit shift at 34,320:1 imbalance |
 
@@ -303,6 +303,18 @@ already queued and their results will be visible in this repo:
   being pinned down is how much of it is resolution versus the extra epochs the
   fine-tune carries, and whether it replicates across seeds. A from-scratch
   matched-budget run and two seed replicates are running.
+- **The resolution gain is currently tuned to this corpus.** Zero-shot on
+  DENTEX the 1280 model is more precise than the baseline (82.4 % vs 73.6 % at
+  tooth level) but less sensitive (recall 32.5 % vs 37.9 %), and running it at
+  a scale-matched larger size made recall worse, not better, so the drop is
+  real specialisation and not a measurement artefact. The identified fix is
+  multi-scale training rather than inference-time rescaling.
+- **A higher headline number exists and is not the better model.** Mask DINO
+  reaches 0.1271 segm mAP, above the 1280 model's 0.1204, while every paired
+  mask-quality metric on 5,460 common cases is separably WORSE than even the
+  640 baseline (Dice −0.039, boundary F −0.065, HD95 +21 px). The headline
+  metric rewards its ranking behaviour, not its masks. The 1280 model remains
+  the mask-quality result; the benchmark paper documents the dissociation.
 - **The noise floor is measured; most arms are single-seed.** Three seeds of the
   reference configuration give a 2 sd band of ±0.21 pp mAP and ±0.50 pp AP75.
   Individual arms remain single-seed, so any difference inside that band is not
