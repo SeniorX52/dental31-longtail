@@ -21,11 +21,15 @@ Segmentation: Leakage, Ceilings, and Noise Floors}
 \maketitle
 
 \begin{abstract}
-We report a systematic negative result on a 31-class panoramic dental radiograph
-corpus: across nineteen training configurations spanning boundary-aware
-objectives, class-balanced losses, frequency-aware DETR training, an
-architectural change to the mask head, and decoupled classifier retraining, no
-configuration improves on a stock baseline beyond seed-level variation.
+We evaluate detection and instance segmentation on a 31-class panoramic dental
+radiograph corpus across more than twenty-five controlled configurations.
+Every change to the objective, the sampling, the loss weighting or the mask
+head lands within seed-level variation. The one change that clears every check
+is physical rather than algorithmic: restoring the input resolution the corpus
+natively carries is worth $+14.2$\,\% relative segmentation mAP, with the
+gain concentrated in the small clinical findings the objective-level arms were
+built to help. Locating that lever, and certifying it, required the apparatus
+this paper describes.
 
 The contribution is not the null itself but the apparatus required to establish
 it, each element of which caught a confident wrong answer that would otherwise
@@ -39,11 +43,10 @@ higher-resolution head with 878{,}432 \emph{fewer} parameters performs
 per-model subsets invert their own sign once compared on the intersection of
 scored cases. \textbf{(5)} Group means over low-support classes fabricate
 results: in one case 98\,\% of a $+0.53$\,pp mAP gain came from a single class
-with \emph{two} test instances. \textbf{(6)} Segmentation AP is a conjunction of
-detection and mask quality, and the largest gain we measured, $+0.64$\,pp, is
-entirely detection-side: the same predictions scored as boxes gain
-\emph{more}, $+0.74$\,pp, from a change to a branch with no path to the box
-head. \textbf{(7)} Cross-dataset AP is
+with \emph{two} test instances. \textbf{(6)} Segmentation AP dissociates from mask
+quality in both directions: one arm gains $+0.64$\,pp entirely from the
+detection side, and a query-based architecture gains $+2.16$\,pp while every
+paired mask metric on 5{,}460 common cases is separably \emph{worse}. \textbf{(7)} Cross-dataset AP is
 meaningless when two corpora annotate a disease at different granularity: our
 caries detector scores exactly 0.0000 on an external benchmark that outlines
 the affected tooth where we outline the lesion, a 19$\times$ area ratio, while
@@ -55,7 +58,11 @@ A closed-form oracle fit attributes 85\,\% of the mask deficit to coefficient
 prediction rather than to the learned basis. Acting on that attribution fails in
 both available directions---capacity leaves masks unchanged, and direct
 coefficient supervision makes them worse---so the deficit is correctly localised
-and not thereby actionable.
+and not thereby actionable. Finally, a fifteen-model consensus bounds the corpus
+itself: 911 pathology annotations, 26--43\,\% of the floor classes, are
+invisible to every model trained here, and the model that lifted caries by
+35\,\% recovers 2.7\,\% of them. The remaining ceiling is the labels, and
+the audit list is generated rather than hypothesised.
 \end{abstract}
 
 \section{Introduction}
@@ -455,6 +462,52 @@ carried as a control, because without one there is no way to distinguish a
 units mismatch from a domain gap---both present as a collapse. Here the control
 also quantifies the real gap: impacted tooth falls from 0.490 to 0.290, a
 41\,\% relative drop, which is the discount any cross-dataset claim must carry.
+
+\section{The Label Ceiling, Measured}
+\label{sec:ceiling}
+
+The apparatus above certifies comparisons between models. This section turns
+the same consensus logic onto the corpus. Fifteen prediction files were on
+disk, spanning four architectures, seven loss configurations and three seeds.
+For every ground-truth instance of the three floor classes we ask the most
+lenient question available: did \emph{any} model place a box of the right
+class at even 0.10 IoU, at the frozen 0.15 operating point?
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+class & missed by all 15 & total GT & share \\
+\midrule
+Periapical lesion & 343 & 799 & \textbf{42.9\,\%} \\
+Bone Loss & 156 & 473 & \textbf{33.0\,\%} \\
+Caries & 412 & 1615 & \textbf{25.5\,\%} \\
+\bottomrule
+\end{tabular}
+\caption{911 annotations that fail the most lenient detection criterion under
+every model trained on this corpus. These are the classes at the metric
+floor.}
+\end{table}
+
+An instance that fails this is not a hard example; it is an absent one. Two
+follow-ups pin down what the set is. First, holding the resolution model out
+of the consensus and asking how much of the set it recovers: the model that
+improved caries by 35\,\% recovers \textbf{2.7\,\%} of the universally missed
+instances. They are therefore not small findings starved by downsampling---the
+one intervention proven to help small findings barely touches them. Second,
+the external check cuts the other way on the labels as a whole: zero-shot on a
+professionally annotated corpus the same detector is 73.6--84.1\,\% precise at
+tooth level, so the label set is not uniformly unreliable. The 911 are a
+specific, enumerable subset, and the list itself is the audit's sampling
+frame.
+
+\paragraph{Protocol.} Consensus failure across independently trained models is
+a label-error detector that costs nothing beyond predictions already held. Run
+it over the \emph{training} split with models trained on that split and the
+signal sharpens further: an annotation a model cannot fit after being
+optimised to fit it is the strongest cheap evidence of label error available.
+No architecture decision on such a corpus is safe until this bound is known,
+because below it, apparent model failures are label failures.
 
 \section{Results}
 

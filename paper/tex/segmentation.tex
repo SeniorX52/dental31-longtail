@@ -33,7 +33,13 @@ acting on that attribution fails in both available directions: tripling the
 coefficient head's capacity leaves masks unchanged while improving the detector
 by accident, and supervising the coefficients directly against their closed-form
 optimum makes masks worse. The deficit is correctly localised and not thereby
-actionable.
+actionable. What \emph{was} actionable lay upstream of the network entirely:
+forty percent of the corpus is natively $1615\times840$ and was being trained
+at 640. Restoring the input resolution improves segm mAP by \textbf{+1.50\,pp
+(+14.2\,\% relative)} and strict-IoU AP75 by +47\,\%, with the gain
+concentrated in the small clinical findings (caries +35\,\%, periapical
+lesion +29\,\%), and it is the only intervention in this study that survives
+every check the apparatus can mount.
 \end{abstract}
 
 \section{The Corpus Cannot Be Evaluated as Distributed}
@@ -366,6 +372,73 @@ short of neither parameters nor a direct training signal. Adding capacity leaves
 mask quality unchanged and improves the detector by accident; adding
 coefficient-space supervision makes masks worse.
 
+\section{The Constraint Was the Input}
+\label{sec:input}
+
+With the coefficient head exonerated of capacity and signal failures, the
+remaining untested variable was what the network is shown. Forty percent of
+the corpus is natively $1615\times840$; at the training size of 640 its long
+side is reduced $2.5\times$, and the classes at the metric floor (caries,
+periapical lesion, bone loss) are precisely the small, low-contrast findings
+such a reduction starves. Fine-tuning the reference model at 1280 for 25
+epochs, all else identical:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+metric & baseline (640) & 1280 & change \\
+\midrule
+segm mAP & 0.1055 & \textbf{0.1204} & $+1.50$\,pp / $+14.2$\,\% \\
+AP50 & 0.2549 & 0.2724 & $+6.9$\,\% \\
+AP75 & 0.0661 & \textbf{0.0974} & $+47.4$\,\% \\
+box mAP & 0.1551 & 0.1568 & $+0.17$\,pp, inside the $\pm0.75$\,pp floor \\
+\bottomrule
+\end{tabular}
+\caption{The resolution arm against the reproduced baseline on the clean
+validation split.}
+\end{table}
+
+\paragraph{Three checks, each of which eliminated an earlier candidate.}
+The box control: box mAP moves $+0.17$\,pp against its own measured
+$\pm0.75$\,pp seed floor, so unlike the widened-head arm the segmentation gain
+has nowhere to originate except mask quality. The strictness split: AP75
+rises seven times harder than AP50, the signature of better localisation
+rather than of ranking or confidence artefacts, which move both together. The
+paired test: on the 5{,}303 cases where both models emit a mask, IoU is
+separably better ($+0.0048$, CI $[+0.0015,+0.0082]$), the first arm in this
+study to achieve that; boundary F moves the other way ($-0.0096$), so the
+masks overlap the truth better while placing their contours less smoothly,
+which is why the gain expresses in AP75 rather than in boundary fidelity.
+
+\paragraph{Where the gain lands.} Root canal treatment $+40$\,\%, caries
+$+35$\,\%, periapical lesion $+29$\,\%, root piece $+20$\,\%, implant
+$+22$\,\%; tail-group AP roughly triples ($0.0101\to0.0295$). Bone loss moves
+$-25$\,\%, the honest exception, and an informative one: it is a large diffuse
+region, not a small finding, so the mechanism predicts no benefit there and
+none appears.
+
+\paragraph{The earlier resolution arms, reinterpreted.} XP2 and XP3 raised
+the \emph{prototype} resolution at 640 input and were the worst arms in the
+study ($-2.02$ and $-1.30$\,pp). Both experiments are the same lesson from
+opposite sides: representation cannot exceed the information the input
+carries, and once the input carries it, the representation is no longer the
+limit.
+
+\paragraph{Status of the claim.} Two confounds are open and both are being
+closed by queued runs. The arm fine-tunes from the converged baseline, so it
+has seen 75 epochs against the baseline's 50; the mitigating evidence is that
+additional epochs \emph{hurt} everywhere else in this study, the baseline
+itself peaking at epoch 26 and losing 1.68\,pp by epoch 50. And it is a single
+seed; two from-scratch replicates at independent seeds, trained for
+\emph{fewer} epochs than the baseline, are the closing test. Externally, the
+gain currently trades sensitivity for precision: zero-shot on a professionally
+annotated corpus the 1280 model is more precise at tooth level (82.4\,\%
+against 73.6\,\%) but recalls less (32.5\,\% against 37.9\,\%), and inference
+at a scale-matched larger size worsened rather than recovered it, so the
+specialisation is real and the identified remedy is multi-scale training
+rather than inference-time rescaling.
+
 \section{Noise Floor (Measured)}
 
 The reference configuration was trained at three seeds, everything else
@@ -417,7 +490,11 @@ negative result. Handed optimal coefficients the model jumps from Dice 0.70 to
 0.87, so the head is demonstrably the constraint; given three times the
 parameters it produces the same masks, and given the optimal coefficients as an
 explicit target it produces worse ones. Whatever limits this head is not
-capacity and not the absence of a signal pointing at the right answer.
+capacity and not the absence of a signal pointing at the right answer. The sequel is
+Section~\ref{sec:input}: the constraint was never inside the network. The one
+intervention that survives every check does not touch the objective, the
+sampling or the head; it restores information the pipeline was discarding
+before the network ever saw the image.
 
 \paragraph{The published comparator losses did not run.} Soft Dice, Tversky,
 Focal Tversky and Kervadec's boundary loss are implemented behind a common
