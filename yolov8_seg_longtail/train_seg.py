@@ -643,6 +643,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "measured spanning 1e-6 to 1e3), so an absolute ridge "
                          "regularises some instances and not others; a relative "
                          "one bounds the condition number by construction.")
+    ap.add_argument("--multi-scale", action="store_true",
+                    help="randomly jitter the training image size each batch. "
+                         "The 1280 model gained +14.2 %% on this corpus but lost "
+                         "external recall (32.5 %% against the baseline's 37.9 %% "
+                         "at tooth level), and inference at a scale-matched size "
+                         "made it WORSE, so the model narrowed its scale envelope "
+                         "rather than the test being mis-specified. Jittering the "
+                         "size during training is the remedy that acts where the "
+                         "problem is.")
     ap.add_argument("--bg-gate", type=float, default=0.0,
                     help="missing-annotation guard: zero the classification "
                          "loss for unassigned anchors OUTSIDE every annotated "
@@ -702,6 +711,8 @@ def main(argv: Optional[List[str]] = None) -> None:
         overrides["cache"] = args.cache
     if args.channels_last:
         overrides["channels_last"] = True
+    if args.multi_scale:
+        overrides["multi_scale"] = True
     if args.compile:
         overrides["compile"] = (True if args.compile in ("1", "true", "True")
                                 else args.compile)
