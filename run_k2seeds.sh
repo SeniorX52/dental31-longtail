@@ -58,6 +58,7 @@ earlier_driver_running() {
     a1=$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | sed -n '2p')
     case "$a1" in
       ./run_hr1280.sh|*/run_hr1280.sh|\
+      ./run_compound.sh|*/run_compound.sh|\
       ./run_maskdino.sh|*/run_maskdino.sh|\
       ./run_phase2.sh|*/run_phase2.sh) return 0 ;;
     esac
