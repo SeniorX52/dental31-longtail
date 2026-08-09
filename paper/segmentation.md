@@ -446,6 +446,46 @@ toward the second costs the first.
 actionable one. The coefficient head is where the error lives, and it is short of
 neither parameters nor a direct training signal.
 
+## The constraint was the input
+
+With the coefficient head exonerated of capacity and signal failures, the
+remaining untested variable was what the network is shown. Forty percent of the
+corpus is natively 1615x840 and was being trained at 640, a 2.5x reduction on
+the long side, and the floor classes are exactly the small low-contrast
+findings such a reduction starves. Fine-tuning the reference at 1280, all else
+identical:
+
+| metric | baseline (640) | 1280 | change |
+|---|---|---|---|
+| segm mAP | 0.1055 | **0.1204** | +1.50 pp / **+14.2 %** |
+| AP50 | 0.2549 | 0.2724 | +6.9 % |
+| AP75 | 0.0661 | **0.0974** | **+47.4 %** |
+| box mAP | 0.1551 | 0.1568 | +0.17 pp, inside the +-0.75 pp floor |
+
+Three checks, each of which eliminated an earlier candidate. Box control: the
+box change sits inside its own seed floor, so the segmentation gain has nowhere
+to originate except mask quality. Strictness split: AP75 rises seven times
+harder than AP50, the signature of localisation rather than ranking. Paired
+test on 5,303 common cases: IoU separably better (+0.0048), the first arm here
+to achieve that; boundary F separably worse (-0.0096), so the masks overlap
+truth better while placing contours less smoothly.
+
+Per class: root canal treatment +40 %, caries +35 %, periapical lesion +29 %,
+root piece +20 %; tail-group AP triples. Bone loss -25 % is the honest
+exception and an informative one: a large diffuse region, so the mechanism
+predicts no benefit and none appears.
+
+The earlier prototype-resolution arms (XP2/XP3, the worst in the study) are the
+same lesson from the other side: representation cannot exceed the information
+the input carries.
+
+Status: the arm fine-tunes from the converged baseline (extra epochs, though
+extra epochs HURT everywhere else here) and is a single seed; two from-scratch
+replicates at independent seeds and fewer epochs than the baseline are queued.
+Externally the gain trades sensitivity for precision (tooth-level 82.4 % vs
+73.6 % precise, 32.5 % vs 37.9 % recall zero-shot), scale-matched inference
+worsened it, and the identified remedy is multi-scale training.
+
 ## Noise floor (measured)
 
 The reference configuration was trained at three seeds, everything else
@@ -483,7 +523,11 @@ Three consequences, and they are not all the same verdict:
 On this corpus, boundary-aware and class-balanced training objectives do not
 improve instance segmentation beyond seed-level variation, and neither does
 acting on the one place the deficit was traced to. We report this as the result
-rather than selecting the metric and split on which it appears otherwise.
+rather than selecting the metric and split on which it appears otherwise. The
+one intervention that survives every check does not touch the objective, the
+sampling or the head: it restores information the pipeline was discarding
+before the network saw the image, and it is worth +14.2 % relative with the
+gain concentrated in the clinical findings.
 
 The two arms of "Acting on the attribution" are the sharpest statement of it.
 Handed optimal coefficients the model jumps from Dice 0.70 to 0.87, so the head

@@ -288,6 +288,30 @@ AP over classes with single-digit support is not a measurement.
 
 ---
 
+## The label ceiling, measured
+
+Turning the consensus logic onto the corpus itself: with fifteen prediction
+files spanning four architectures, seven loss configurations and three seeds,
+ask of each floor-class ground truth whether ANY model placed a box of the
+right class at even 0.10 IoU at the frozen operating point.
+
+| class | missed by all 15 | total | share |
+|---|---|---|---|
+| Periapical lesion | 343 | 799 | **42.9 %** |
+| Bone Loss | 156 | 473 | **33.0 %** |
+| Caries | 412 | 1615 | **25.5 %** |
+
+An instance that fails this is not hard, it is absent. Holding the resolution
+model out of the consensus: the model that improved caries 35 % recovers
+**2.7 %** of the universally missed set, so these are not small findings
+starved by downsampling. The external check bounds the reading from the other
+side: the same detector is 73.6 to 84.1 % precise at tooth level on a
+professionally annotated corpus, so the label set is not uniformly bad; the
+911 are a specific, enumerable subset and the list is the audit's sampling
+frame. Protocol: run the same consensus over the TRAINING split with models
+trained on it, since an annotation a model cannot fit after being optimised to
+fit it is the strongest cheap label-error evidence available.
+
 ## 6. Results
 
 Nineteen configurations. Segmentation: reference, three class-weighting
