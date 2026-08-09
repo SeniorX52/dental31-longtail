@@ -113,6 +113,97 @@ def soft_boundary(x: torch.Tensor, band: int = 3) -> torch.Tensor:
     return (dilated - eroded).squeeze(1)
 
 
+class _GatedBCE(torch.nn.Module):
+    """BCE that refuses to punish confident detections in unannotated regions.
+
+    THE PROBLEM IT TREATS. Consensus mining found 911 validation annotations
+    (43 % of periapical lesion, 33 % of bone loss, 26 % of caries) that no
+    model in a fifteen-model zoo can detect, and the model that raised caries
+    by 35 % recovers 2.7 % of them: the pathology labels are unreliable. An
+    unreliable label set is unreliable in BOTH directions, and the unannotated
+    real finding is the direction that poisons training: every anchor on it is
+    supervised toward background, so the model is actively taught to suppress
+    true lesions.
+
+    THE MECHANISM, AND ITS SOURCES. For anchors that (a) received no
+    assignment, (b) do NOT lie inside any annotated ground-truth box, and
+    (c) predict some class above a confidence threshold, the classification
+    loss is zeroed instead of pushing the score to zero. This is the shared
+    core of three published treatments of missing-annotation detection:
+
+      * Background Recalibration Loss (Zhang et al., ICASSP 2020,
+        arXiv:2002.05274) restricts recalibration to "confusion" anchors with
+        IoU < 0.1 to any ground truth and switches the loss branch at an
+        activation threshold t = 0.5, which is where our tau default comes
+        from. BRL goes further than we do, mirroring the positive branch
+        (actively encouraging the prediction); we only STOP suppressing,
+        which is the conservative half of the same move.
+      * Soft Sampling (Wu et al., arXiv:1806.06986) down-weights the gradient
+        of negatives as a function of overlap with annotated positives, on
+        the observation that negatives NEAR annotated boxes are reliable
+        negatives while far-from-annotation background is uncertain. That is
+        why condition (b) exempts anchors inside annotated boxes: those
+        negatives stay fully supervised.
+      * SparseDet (Suri et al., arXiv:2201.04620) separates proposals into
+        labeled and unlabeled regions and mines pseudo-positives from the
+        unlabeled ones rather than treating them as background.
+
+    Deviation from BRL, stated: BRL is formulated on focal loss over
+    per-anchor-per-class terms; YOLOv8 supervises BCE over task-aligned
+    assignments. We gate per ANCHOR (an anchor whose best class exceeds tau is
+    ignored for all classes) rather than per class, and we ignore rather than
+    flip the branch. Both choices are the cautious end of the published range.
+    """
+
+    def __init__(self, owner):
+        super().__init__()
+        self._owner = owner
+        self._inner = torch.nn.BCEWithLogitsLoss(reduction="none")
+
+    def forward(self, pred, target):
+        loss = self._inner(pred, target)
+        m = getattr(self._owner, "_bg_gate_mask", None)
+        if m is not None and m.shape == pred.shape[:2]:
+            loss = loss * (~m).unsqueeze(-1).to(loss.dtype)
+            self._owner._bg_gate_mask = None
+        return loss
+
+
+def _install_bg_gate(crit, tau):
+    """Wrap the assigner so every step records which negative anchors are
+    confident detections OUTSIDE all annotated boxes, then swap the BCE for
+    the gated one. The assigner is called with pixel-space anchor points and
+    ground-truth boxes and with already-sigmoided scores (see
+    v8DetectionLoss.__call__), so everything the gate needs passes through it.
+    """
+    assigner = crit.assigner
+    orig_forward = assigner.forward
+
+    def recording_forward(pd_scores, pd_bboxes, anc_points, gt_labels,
+                          gt_bboxes, mask_gt, *a, **k):
+        out = orig_forward(pd_scores, pd_bboxes, anc_points, gt_labels,
+                           gt_bboxes, mask_gt, *a, **k)
+        try:
+            fg_mask = out[3].bool()                       # (b, A)
+            ax = anc_points[:, 0].view(1, -1, 1)          # (1, A, 1)
+            ay = anc_points[:, 1].view(1, -1, 1)
+            x1 = gt_bboxes[..., 0].unsqueeze(1)           # (b, 1, n)
+            y1 = gt_bboxes[..., 1].unsqueeze(1)
+            x2 = gt_bboxes[..., 2].unsqueeze(1)
+            y2 = gt_bboxes[..., 3].unsqueeze(1)
+            inside = ((ax >= x1) & (ax <= x2) & (ay >= y1) & (ay <= y2))
+            valid = mask_gt.view(mask_gt.shape[0], 1, -1).bool()
+            inside_any = (inside & valid).any(-1)         # (b, A)
+            confident = pd_scores.amax(-1) > tau          # scores arrive sigmoided
+            crit._bg_gate_mask = (~fg_mask) & (~inside_any) & confident
+        except Exception:
+            crit._bg_gate_mask = None                     # never break training
+        return out
+
+    assigner.forward = recording_forward
+    crit.bce = _GatedBCE(crit)
+
+
 class BoundaryAwareSegLoss(v8SegmentationLoss):
     """v8SegmentationLoss with a selectable auxiliary term on the mask loss.
 
@@ -137,6 +228,9 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
         self.coeff_ridge = float(getattr(model, "coeff_ridge", 1e-2))
         self.coeff_max_norm = float(getattr(model, "coeff_max_norm", 50.0))
         self.coeff_clip = float(getattr(model, "coeff_clip", 10.0))
+        self.bg_gate = float(getattr(model, "bg_gate", 0.0))
+        if self.bg_gate > 0:
+            _install_bg_gate(self, self.bg_gate)
 
     def oracle_coefficients(self, gt_mask, proto, boxes):
         """Closed-form best coefficients for these masks on these prototypes.
@@ -439,7 +533,8 @@ class LongTailSegTrainer(SegmentationTrainer):
                  proto_src: str = "p3",
                  coeff_weight: float = 0.0,
                  coeff_ridge: float = 1e-2,
-                 coeff_width: int = 0):
+                 coeff_width: int = 0,
+                 bg_gate: float = 0.0):
         super().__init__(overrides=overrides, _callbacks=_callbacks)
         self._lt_class_weights = class_weights
         self._lt_boundary_weight = boundary_weight
@@ -449,6 +544,7 @@ class LongTailSegTrainer(SegmentationTrainer):
         self._lt_coeff_weight = coeff_weight
         self._lt_coeff_ridge = coeff_ridge
         self._lt_coeff_width = coeff_width
+        self._lt_bg_gate = bg_gate
 
     def get_model(self, cfg=None, weights=None, verbose=True):
         cls = (P2ProtoSegModel if getattr(self, "_lt_proto_src", "p3") == "p2"
@@ -465,6 +561,7 @@ class LongTailSegTrainer(SegmentationTrainer):
         model.mask_aux = self._lt_mask_aux
         model.coeff_weight = getattr(self, "_lt_coeff_weight", 0.0)
         model.coeff_ridge = getattr(self, "_lt_coeff_ridge", 1e-2)
+        model.bg_gate = getattr(self, "_lt_bg_gate", 0.0)
         if getattr(self, "_lt_coeff_width", 0):
             widen_coefficient_head(model, self._lt_coeff_width)
         if getattr(self, "_lt_proto_src", "p3") == "p2":
@@ -546,6 +643,15 @@ def main(argv: Optional[List[str]] = None) -> None:
                          "measured spanning 1e-6 to 1e3), so an absolute ridge "
                          "regularises some instances and not others; a relative "
                          "one bounds the condition number by construction.")
+    ap.add_argument("--bg-gate", type=float, default=0.0,
+                    help="missing-annotation guard: zero the classification "
+                         "loss for unassigned anchors OUTSIDE every annotated "
+                         "box whose best class score exceeds this threshold, "
+                         "instead of training them toward background. 0.5 "
+                         "follows the switch threshold of Background "
+                         "Recalibration Loss (arXiv:2002.05274); anchors "
+                         "inside annotated boxes stay fully supervised per "
+                         "Soft Sampling (arXiv:1806.06986). 0 disables.")
     ap.add_argument("--coeff-width", type=int, default=0,
                     help="rebuild the cv4 coefficient branch with this hidden "
                          "width (stock is 80). Capacity control for "
@@ -621,7 +727,8 @@ def main(argv: Optional[List[str]] = None) -> None:
                                  proto_src=args.proto_src,
                                  coeff_weight=args.coeff_weight,
                                  coeff_ridge=args.coeff_ridge,
-                                 coeff_width=args.coeff_width)
+                                 coeff_width=args.coeff_width,
+                                 bg_gate=args.bg_gate)
     trainer.train()
 
 

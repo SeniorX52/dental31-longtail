@@ -78,3 +78,6 @@ PAUSE
 data_frac25/
 data_frac50/
 data_frac75/
+data_clean_dn/
+data_selftrain/
+data_tooth/
