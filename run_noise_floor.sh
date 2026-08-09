@@ -33,7 +33,7 @@ ROOT="$HOME/Documents/ML_SOTA"
 cd "$ROOT"
 mkdir -p logs reports preds runs
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$PYTHONPATH"
+export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 EPOCHS=50; BATCH=8; IMGSZ=640
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }

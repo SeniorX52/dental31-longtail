@@ -38,7 +38,7 @@ ROOT="$HOME/Documents/ML_SOTA"
 cd "$ROOT"
 mkdir -p logs reports preds runs
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$PYTHONPATH"
+export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 EPOCHS=50
 BATCH=8
@@ -129,7 +129,7 @@ step "contour metrics and paired comparison against S0"
   --train-json data_clean/annotations/instances_train.json \
   --conf "$CONF" --boot 200 --out "reports/contour_${TAG}_valid" 2>&1 | tail -3
 [ -f "reports/paired_contour_S0_${TAG}_valid.json" ] || \
-  PYTHONPATH="$ROOT/eval:$PYTHONPATH" python eval/paired_contour.py \
+  PYTHONPATH="$ROOT/eval:${PYTHONPATH:-}" python eval/paired_contour.py \
     --gt data_clean/annotations/instances_valid.json \
     --dt-a preds/ablation_S0_valid.json --label-a S0 \
     --dt-b "preds/ablation_${TAG}_valid.json" --label-b "$TAG" \

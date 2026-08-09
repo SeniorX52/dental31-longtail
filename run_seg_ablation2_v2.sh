@@ -24,7 +24,7 @@ ROOT="$HOME/Documents/ML_SOTA"
 cd "$ROOT"
 mkdir -p logs reports preds runs
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$PYTHONPATH"
+export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 EPOCHS=${EPOCHS:-50}
 BATCH=${BATCH:-8}

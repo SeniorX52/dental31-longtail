@@ -47,7 +47,7 @@ DINO="$HOME/DINO"
 cd "$ROOT"
 mkdir -p logs reports preds runs/dino_abl
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$DINO:$PYTHONPATH"
+export PYTHONPATH="$ROOT:$DINO:${PYTHONPATH:-}"
 
 GT_VALID="$ROOT/data_clean/annotations/instances_valid.json"
 # save_checkpoint_interval=100 is a DISK fix, not a training change. The DINO

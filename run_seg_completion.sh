@@ -50,7 +50,7 @@ ROOT="$HOME/Documents/ML_SOTA"
 cd "$ROOT"
 mkdir -p logs reports preds runs
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$PYTHONPATH"
+export PYTHONPATH="$ROOT:${PYTHONPATH:-}"
 
 EPOCHS=50
 BATCH=8
@@ -202,7 +202,7 @@ score_extras() {
 
   if [ ! -f "reports/paired_contour_${ref}_${tag}_valid.json" ]; then
     step "paired contour $tag vs $ref  (same cases only)"
-    PYTHONPATH="$ROOT/eval:$PYTHONPATH" python eval/paired_contour.py \
+    PYTHONPATH="$ROOT/eval:${PYTHONPATH:-}" python eval/paired_contour.py \
       --gt data_clean/annotations/instances_valid.json \
       --dt-a "$rdt" --label-a "$ref" --dt-b "$dt" --label-b "$tag" \
       --conf "$CONF" --boot 500 \

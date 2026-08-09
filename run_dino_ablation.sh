@@ -21,7 +21,7 @@ DINO="$HOME/DINO"
 cd "$ROOT"
 mkdir -p logs reports preds runs/dino_abl
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$DINO:$PYTHONPATH"
+export PYTHONPATH="$ROOT:$DINO:${PYTHONPATH:-}"
 
 GT_VALID="$ROOT/data_clean/annotations/instances_valid.json"
 BASE_OPTS="num_classes=32 dn_labelbook_size=32 batch_size=2 epochs=12 lr_drop=11"

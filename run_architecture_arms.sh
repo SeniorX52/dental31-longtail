@@ -59,7 +59,7 @@ DINO="$HOME/DINO"
 cd "$ROOT"
 mkdir -p logs reports preds runs runs/dino_abl
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$DINO:$PYTHONPATH"
+export PYTHONPATH="$ROOT:$DINO:${PYTHONPATH:-}"
 
 EPOCHS=50
 BATCH=8

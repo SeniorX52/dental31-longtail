@@ -25,7 +25,7 @@ ROOT="$HOME/Documents/ML_SOTA"
 DINO="$HOME/DINO"
 cd "$ROOT"
 source "$HOME/miniconda3/bin/activate" dental
-export PYTHONPATH="$ROOT:$DINO:$PYTHONPATH"
+export PYTHONPATH="$ROOT:$DINO:${PYTHONPATH:-}"
 
 stamp() { date "+%Y-%m-%d %H:%M:%S"; }
 step()  { echo; echo "=== [$(stamp)] $* ==="; }
