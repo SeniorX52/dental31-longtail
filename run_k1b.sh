@@ -34,7 +34,7 @@
 cd "$HOME/Documents/ML_SOTA" || exit 1
 source "$HOME/miniconda3/bin/activate" dental
 set -u
-export PYTHONPATH="$PWD:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 mkdir -p logs reports preds
 
 TAG=abl_K1b_coeffdistill
@@ -87,7 +87,7 @@ score() {
     --train-json data_clean/annotations/instances_train.json \
     --conf "$CONF" --boot 200 --out "reports/contour_${tag}_valid" 2>&1 | tail -3 || true
   if [ -f preds/ablation_S0_valid.json ]; then
-    PYTHONPATH="$PWD/eval:$PYTHONPATH" python eval/paired_contour.py \
+    PYTHONPATH="$PWD/eval:${PYTHONPATH:-}" python eval/paired_contour.py \
       --gt data_clean/annotations/instances_valid.json \
       --dt-a preds/ablation_S0_valid.json --label-a S0 \
       --dt-b "$dt" --label-b "$tag" --conf "$CONF" --boot 500 \

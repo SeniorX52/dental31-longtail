@@ -45,7 +45,7 @@ cd "$HOME/Documents/ML_SOTA" || exit 1
 # conda's activation hooks reference unset variables, so -u goes on afterwards
 source "$HOME/miniconda3/bin/activate" dental
 set -u
-export PYTHONPATH="$PWD:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 mkdir -p logs reports
 
 DATA="$PWD/data_clean/data.yaml"
@@ -176,7 +176,7 @@ score() {
   rdt="preds/ablation_${REF#abl_}_valid.json"
   [ -f "$rdt" ] || rdt="preds/ablation_S0_valid.json"
   if [ -f "$rdt" ]; then
-    PYTHONPATH="$PWD/eval:$PYTHONPATH" python eval/paired_contour.py \
+    PYTHONPATH="$PWD/eval:${PYTHONPATH:-}" python eval/paired_contour.py \
         --gt data_clean/annotations/instances_valid.json \
         --dt-a "$rdt" --label-a S0 --dt-b "$dt" --label-b "$tag" \
         --conf "$CONF" --boot 500 \

@@ -41,7 +41,7 @@
 cd "$HOME/Documents/ML_SOTA" || exit 1
 source "$HOME/miniconda3/bin/activate" dental
 set -u
-export PYTHONPATH="$PWD:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 mkdir -p logs reports preds
 
 stamp() { date '+%F %T'; }

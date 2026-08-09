@@ -12,7 +12,7 @@
 cd "$HOME/Documents/ML_SOTA" || exit 1
 source "$HOME/miniconda3/bin/activate" dental
 set -u
-export PYTHONPATH="$PWD:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 mkdir -p logs reports preds weights
 stamp() { date '+%F %T'; }
 finished() { python tools/run_finished.py "runs/segment/$1" >/dev/null 2>&1; }

@@ -18,7 +18,7 @@
 cd "$HOME/Documents/ML_SOTA" || exit 1
 source "$HOME/miniconda3/bin/activate" dental
 set -u
-export PYTHONPATH="$PWD:$PYTHONPATH"
+export PYTHONPATH="$PWD:${PYTHONPATH:-}"
 mkdir -p logs reports preds
 
 TAG=abl_HR1280ft
@@ -68,7 +68,7 @@ if finished "$TAG"; then
   python eval/coco_eval_report.py --gt data_clean/annotations/instances_valid.json \
       --dt "$dt" --train-json data_clean/annotations/instances_train.json \
       --iou-type bbox --out "reports/bboxchk_${TAG}_valid" 2>&1 | tail -3
-  PYTHONPATH="$PWD/eval:$PYTHONPATH" python eval/paired_contour.py \
+  PYTHONPATH="$PWD/eval:${PYTHONPATH:-}" python eval/paired_contour.py \
       --gt data_clean/annotations/instances_valid.json \
       --dt-a preds/ablation_S0_valid.json --label-a S0 \
       --dt-b "$dt" --label-b "$TAG" --conf "$CONF" --boot 500 \
