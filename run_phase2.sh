@@ -68,7 +68,8 @@ earlier_driver_running() {
     [ -r "/proc/$p/cmdline" ] || continue
     a1=$(tr '\0' '\n' < "/proc/$p/cmdline" 2>/dev/null | sed -n '2p')
     case "$a1" in
-      ./run_hr1280.sh|*/run_hr1280.sh|./run_maskdino.sh|*/run_maskdino.sh) return 0 ;;
+      ./run_hr1280.sh|*/run_hr1280.sh|./run_hr1600.sh|*/run_hr1600.sh|\
+      ./run_maskdino.sh|*/run_maskdino.sh) return 0 ;;
     esac
   done
   return 1
@@ -86,16 +87,18 @@ wait_turn() {
 
 # Held identical to abl_S0 except for the one variable under test, so the
 # comparison against its 0.1055 is clean.
-train_arm() {           # $1 = tag, $2 = data.yaml, $3 = model weights
-  local tag="$1" data="$2" model="$3"
+train_arm() {           # $1=tag $2=data.yaml $3=weights [$4=imgsz $5=batch $6=epochs]
+  local tag="$1" data="$2" model="$3" sz="${4:-640}" bs="${5:-8}" ep="${6:-50}"
   if finished "$tag"; then echo "[$(stamp)] $tag already complete"; return 0; fi
   local RESUME=()
   [ -f "runs/segment/$tag/weights/last.pt" ] && \
     RESUME=(--resume "runs/segment/$tag/weights/last.pt")
   echo "[$(stamp)] === $tag  (data $data, model $model) ==="
+  local CACHE=(--cache ram)
+  [ "$sz" -gt 640 ] && CACHE=()      # a 1280 RAM cache does not fit
   python yolov8_seg_longtail/train_seg.py \
       --data "$data" --model "$model" --nc 31 \
-      --epochs 50 --imgsz 640 --batch 8 --seed 42 --cache ram \
+      --epochs "$ep" --imgsz "$sz" --batch "$bs" --seed 42 "${CACHE[@]}" \
       --channels-last --weights none --boundary-weight 0 \
       --name "$tag" "${RESUME[@]}" 2>&1 | tail -15
   finished "$tag" && echo "[$(stamp)] $tag finished" \
@@ -109,7 +112,7 @@ score() {
       --weights "runs/segment/$tag/weights/best.pt" \
       --gt data_clean/annotations/instances_valid.json \
       --images data_clean/valid/images --out "$dt" \
-      --imgsz 640 --conf 0.001 --seed 42 2>&1 | tail -2
+      --imgsz "${2:-640}" --conf 0.001 --seed 42 2>&1 | tail -2
   python eval/coco_eval_report.py --gt data_clean/annotations/instances_valid.json \
       --dt "$dt" --train-json data_clean/annotations/instances_train.json \
       --iou-type segm --out "reports/eval_${tag}_valid" 2>&1 | tail -3
@@ -123,8 +126,13 @@ for f in 25 50 75; do
   score     "abl_LC${f}"
 done
 
-train_arm abl_YOLO11x "$PWD/data_clean/data.yaml" yolo11x-seg.pt
-score     abl_YOLO11x
+# Moved from 640 to 1280. Testing a newer architecture at the resolution we
+# have just shown handicaps the model would measure the handicap rather than the
+# architecture: the same backbone gained +14.2 % relative going 640 -> 1280.
+# Thirty epochs because every arm here peaks by epoch 26 and best.pt is compared;
+# batch 2 because 1280 does not fit at batch 8.
+train_arm abl_YOLO11x_1280 "$PWD/data_clean/data.yaml" yolo11x-seg.pt 1280 2 30
+score     abl_YOLO11x_1280 1280
 
 echo "[$(stamp)] === learning curve ==="
 python - <<'PY'
