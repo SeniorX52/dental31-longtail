@@ -43,7 +43,12 @@ with \emph{two} test instances. \textbf{(6)} Segmentation AP is a conjunction of
 detection and mask quality, and the largest gain we measured, $+0.64$\,pp, is
 entirely detection-side: the same predictions scored as boxes gain
 \emph{more}, $+0.74$\,pp, from a change to a branch with no path to the box
-head. \textbf{(7)} The published logit-adjustment constant does not transfer
+head. \textbf{(7)} Cross-dataset AP is
+meaningless when two corpora annotate a disease at different granularity: our
+caries detector scores exactly 0.0000 on an external benchmark that outlines
+the affected tooth where we outline the lesion, a 19$\times$ area ratio, while
+the same predictions are 74\,\% precise once the question is asked at tooth
+level. \textbf{(8)} The published logit-adjustment constant does not transfer
 from $\sim$100:1 to 34{,}320:1 imbalance.
 
 A closed-form oracle fit attributes 85\,\% of the mask deficit to coefficient
@@ -245,7 +250,7 @@ the check that establishes this---comparing achieved performance against the
 ceiling---costs one line of arithmetic. We ran it after the experiment. It
 should be run before.
 
-\section{Three Metric Failures That Produce Confident Wrong Answers}
+\section{Four Metric Failures That Produce Confident Wrong Answers}
 
 \subsection{Distance Metrics on Per-Model Subsets}
 
@@ -350,6 +355,94 @@ segmentation must report the same predictions scored as boxes. If the box delta
 is comparable to or larger than the mask delta, the change is not a mask result
 whatever the segmentation AP says. This costs one extra evaluation pass and is
 the only cheap way to separate the two factors the metric multiplies together.
+
+\subsection{Cross-Dataset AP When Annotation Granularity Differs}
+\label{sec:granularity}
+
+The three failures above are internal to one corpus. The fourth appears the
+moment a second corpus is introduced, and it is the most emphatic of the four
+because the wrong answer it produces is exactly zero.
+
+We converted the DENTEX 2023 disease subset~\cite{hamamci2023dentex} into our
+vocabulary: 678 panoramic radiographs, 3529 professionally annotated instances,
+of which three classes map onto ours. Scoring our baseline on it zero-shot
+gives:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrr}
+\toprule
+class & DENTEX box AP & DENTEX mask AP \\
+\midrule
+impacted tooth & 0.2902 & 0.2954 \\
+Caries & \textbf{0.0000} & \textbf{0.0000} \\
+Periapical lesion & \textbf{0.0000} & \textbf{0.0000} \\
+\bottomrule
+\end{tabular}
+\caption{Zero-shot, and two thirds of it is an artefact.}
+\end{table}
+
+Read literally, the detector does not work at all on external data. It is not a
+defect of the pipeline: the model emits 26{,}340 caries detections on these
+images, the category mapping is verified, and impacted tooth reaches an IoU of
+0.911 on the same files, so loading, coordinates and class identity are all
+sound. Yet across 4367 caries detections and 2767 caries ground truths, no pair
+anywhere exceeds \textbf{IoU 0.384}.
+
+The cause is that the two corpora annotate the same disease at different
+granularity.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+class & DENTEX median box & ours & ratio \\
+\midrule
+Caries & 1.228\,\% of image & 0.064\,\% & 19.2$\times$ \\
+Periapical lesion & 1.407\,\% & 0.150\,\% & 9.4$\times$ \\
+impacted tooth & 1.072\,\% & 0.895\,\% & 1.2$\times$ \\
+\bottomrule
+\end{tabular}
+\caption{Within DENTEX a caries box is 1.15$\times$ the area of its own
+impacted-tooth box, so it marks the affected \emph{tooth}; ours is
+0.07$\times$, so it marks the \emph{lesion}.}
+\end{table}
+
+DENTEX follows a quadrant--enumeration--diagnosis pipeline, so a diagnosis is a
+property of a tooth and the box is the tooth. Our corpus outlines the lesion. A
+box one nineteenth of the area of its target cannot reach IoU 0.5 however
+perfectly it is placed, so the zero is arithmetic rather than empirical.
+Impacted tooth transfers only because it is the one class on which the two
+corpora agree about what is being outlined, which is precisely why it was
+chosen as the control.
+
+Asking the granularity-correct question instead---does our lesion detection
+fall inside the affected-tooth box---the same predictions give:
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+class & conf & recall & precision \\
+\midrule
+Caries & 0.15 & 37.9\,\% & 73.6\,\% \\
+Caries & 0.30 & 25.8\,\% & 84.1\,\% \\
+Periapical lesion & 0.15 & 39.9\,\% & 46.8\,\% \\
+impacted tooth & 0.15 & 72.0\,\% & 77.1\,\% \\
+\bottomrule
+\end{tabular}
+\caption{Tooth-level evaluation of the identical predictions. The caries
+detector is correct in 74\,\% of the cases where it fires.}
+\end{table}
+
+\paragraph{Protocol.} Before comparing detectors across corpora, compare the
+\emph{annotations}: report the median box area per class in each, and treat any
+class whose ratio departs materially from unity as incomparable under IoU until
+the granularity is reconciled. A class on which the two corpora agree should be
+carried as a control, because without one there is no way to distinguish a
+units mismatch from a domain gap---both present as a collapse. Here the control
+also quantifies the real gap: impacted tooth falls from 0.490 to 0.290, a
+41\,\% relative drop, which is the discount any cross-dataset claim must carry.
 
 \section{Results}
 
