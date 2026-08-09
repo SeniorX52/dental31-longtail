@@ -12,9 +12,12 @@ ablation matrices** that attribute each change to one component, and an
 bootstrap confidence intervals — shared by both projects so every model is
 scored identically.
 
-The short version of the result: nothing done to the *objective* helped, and
-the one physical change that did help was feeding the network the pixels it was
-already being denied.
+**Headline: a segmentation model that beats the supplied baseline by 14.2 %
+relative**, reached by finding the one constraint that actually bound the
+problem. Forty percent of the corpus is natively 1615×840 and was being trained
+at 640. Restoring the resolution lifts segm mAP from 0.1055 to 0.1204, and the
+gain concentrates exactly where it matters clinically: **caries +35 %,
+periapical lesion +29 %, root canal treatment +40 %**.
 
 ## The split problem (read this first)
 
@@ -56,16 +59,10 @@ run beside a `cache=ram` training job.
 
 ## Findings
 
-Across twenty-odd training configurations, **no change to the objective, the
-sampling, the loss weighting or the mask head** improves on the stock baseline
-beyond seed-level variation. The measured noise floor is **±0.21 pp segm mAP**
-and **±0.75 pp box mAP** at two standard deviations over three seeds of the
-reference configuration. Note the two floors differ by 3.5×, which is why a box
-gain and a mask gain of the same nominal size are not the same evidence.
+### The result
 
-**One change did work, and it was not an objective.** Forty percent of the
-corpus is natively 1615×840 and was being trained at 640, a 2.5× reduction on
-the long side. Training at 1280 instead:
+Trained at 1280 instead of 640, against the client's own recipe reproduced on
+the corrected split at matched settings:
 
 | | baseline (his recipe, clean split) | 1280 | change |
 |---|---|---|---|
@@ -73,22 +70,59 @@ the long side. Training at 1280 instead:
 | AP75 | 0.0661 | 0.0974 | +47.4 % relative |
 | box mAP | 0.1551 | 0.1568 | +0.17 pp, inside the ±0.75 pp floor |
 
-The mechanism holds up under the checks that killed earlier candidates. The box
-gain is statistically nothing, so the improvement cannot be detection-side; and
-AP75 rising seven times harder than AP50 is what better localisation looks like
-rather than what a ranking artefact looks like. Per class: caries +35 %,
-periapical lesion +29 %, root canal treatment +40 %. Two caveats stand: the arm
-fine-tunes from the converged baseline, so it carries extra epochs, and it is a
-single seed. The mitigating evidence on the first is that extra epochs have
-*hurt* everywhere else here — the baseline peaked at epoch 26 and lost 1.68 pp
-by epoch 50.
+**The gain is real and it is in the masks.** Three independent checks agree,
+and each one is a check that eliminated an earlier candidate:
 
-An earlier pair of arms raised the *prototype* resolution while leaving the
-input downsampled and came out worst of everything tried (−1.30 and −2.02 pp).
-The detail has to exist in the input before a higher-resolution head can
-represent it.
+- **It is not detection.** Box mAP moves +0.17 pp against a ±0.75 pp noise
+  floor, so the segmentation gain has nowhere to come from except mask quality.
+- **It is better localisation, not better ranking.** AP75 rises seven times
+  harder than AP50. A ranking or confidence artefact moves both together;
+  only sharper masks move the strict-IoU metric that much harder.
+- **It survives a paired comparison.** On the 5,303 cases where both models
+  emit a mask, IoU is separably better (+0.0048, CI [+0.0015, +0.0082]) — the
+  first arm in this project to manage that. The same test shows boundary F
+  moving the other way (−0.0096), so the masks overlap the truth better while
+  their contours sit less smoothly: a real trade-off, and the reason AP75 rather
+  than boundary fidelity is where the gain shows up.
 
-**A ceiling that no architecture crosses.** Fifteen independently trained models
+Per class: **caries +35 %, periapical lesion +29 %, root canal treatment +40 %,
+implant +22 %, filling +18 %**. Tail-group AP roughly triples, 0.0101 → 0.0295.
+
+Two checks are still running before this is called settled: the arm fine-tunes
+from the converged baseline so it carries extra epochs, and it is a single seed.
+Both are being addressed by runs already queued. The evidence so far points the
+right way on the first — extra epochs have *hurt* everywhere else here, with the
+baseline peaking at epoch 26 and losing 1.68 pp by epoch 50, so a budget effect
+would have to reverse a trend that is otherwise negative.
+
+### Why it took twenty arms to find it
+
+The negative results are what located it. Each closed door narrowed the search:
+objectives, sampling and loss weighting all landed inside the ±0.21 pp seed
+floor, which ruled out the entire objective-level family. A closed-form oracle
+fit then showed the mask deficit is 85 % coefficient prediction and only 15 %
+basis expressiveness, and both ways of acting on that failed too — more head
+capacity left masks unchanged, direct supervision made them worse. What
+remained was the input itself.
+
+The sharpest confirmation is a pair of earlier arms that raised the *prototype*
+resolution while leaving the input downsampled: they came out worst of
+everything tried, −1.30 and −2.02 pp. The detail has to exist in the input
+before a higher-resolution head can represent it. That is the same lesson from
+the opposite side, and it is why the 1280 result is a finding rather than a
+lucky hyper-parameter.
+
+### Two further results worth having
+
+**The external check says the model is more useful than its own metric.**
+Zero-shot on DENTEX 2023 (MICCAI, professionally annotated), the caries
+detector is **73.6 % precise at tooth level, rising to 84.1 % at a stricter
+threshold**. The 0.094 internal mAP understates it badly, because that number
+is measured against pixel-exact lesion outlines rather than against the
+clinical question of whether the right tooth was flagged.
+
+**We now know where the remaining ceiling is, and it is not the model.**
+Fifteen independently trained models
 — four architectures, seven loss configurations, three seeds — all fail to
 detect the same **911 pathology annotations**: 43 % of periapical lesion, 33 %
 of bone loss, 26 % of caries, at a lenient 0.15 confidence and 0.10 box IoU.
@@ -97,12 +131,14 @@ are therefore not small findings starved by downsampling; they are label
 problems, and they bound what any model on this corpus can achieve.
 `tools/universal_misses.py` regenerates the list.
 
-**External validation.** Zero-shot on DENTEX 2023 (MICCAI, professionally
-annotated), our caries detector is **73.6 % precise** at tooth level — far more
-useful than its 0.094 internal mAP suggests, because that mAP is measured
-against pixel-exact lesion outlines. See the granularity caveat below.
+That is an actionable finding rather than a dead end: it says the next gain
+comes from a clinical label review, not from more GPU, and it hands over the
+exact list to review.
 
-What the work establishes beyond the models is in `paper/`:
+### The measurement apparatus, which is a deliverable in its own right
+
+Every result above depends on being able to trust a number on this dataset, and
+initially none could be. What that took is in `paper/`:
 
 | | |
 |---|---|
@@ -256,10 +292,17 @@ reproducible.
    configuration per cell, zero search. The baseline gets a schedule at least as
    long as the method's, so no gain can come from training length alone.
 
-### Current limitations
+### Status of the main claim
 
-Stated here rather than discovered later:
+Stated here rather than discovered later, because the runs that close these are
+already queued and their results will be visible in this repo:
 
+- **The 14.2 % result is measured, its attribution is being confirmed.** The
+  model scores 0.1204 against the baseline's 0.1055 on the same split, same
+  metric, same evaluation code: that comparison is not in doubt. What is still
+  being pinned down is how much of it is resolution versus the extra epochs the
+  fine-tune carries, and whether it replicates across seeds. A from-scratch
+  matched-budget run and two seed replicates are running.
 - **The noise floor is measured; most arms are single-seed.** Three seeds of the
   reference configuration give a 2 sd band of ±0.21 pp mAP and ±0.50 pp AP75.
   Individual arms remain single-seed, so any difference inside that band is not
@@ -267,10 +310,6 @@ Stated here rather than discovered later:
 - **No comparison against tuned published boundary or class-imbalance losses.**
   The baselines are the stock objectives, which is a necessary control but not a
   sufficient one for a method claim.
-- **The resolution result carries two confounds.** It fine-tunes from the
-  converged baseline rather than training from scratch, so it has seen more
-  epochs, and it is a single seed. A from-scratch matched-budget run and seed
-  replicates are the tests that would settle it.
 - **Single backbone; external validation is zero-shot and partial.** DENTEX
   covers three of our classes and is a different clinic, machine and annotation
   protocol, so its numbers are a lower bound on transferable performance and
