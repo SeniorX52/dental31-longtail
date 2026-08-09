@@ -5,12 +5,16 @@ panoramic dental radiograph dataset with an extreme class imbalance — from
 ~33,000 instances (Filling) down to single digits (TAD = 4, Bone defect = 1).
 
 The repo contains four things: a **data-integrity toolchain** that turned out to
-be necessary before any number on this dataset means anything, **long-tail and
-boundary-aware modifications** to both architectures, **frozen ablation
-matrices** that attribute each change to one component, and an **evaluation
-stack** — COCO metrics, contour metrics, a clinical endpoint, and bootstrap
-confidence intervals — shared by both projects so every model is scored
-identically.
+be necessary before any number on this dataset means anything, **long-tail,
+boundary-aware and resolution modifications** to both architectures, **frozen
+ablation matrices** that attribute each change to one component, and an
+**evaluation stack** — COCO metrics, contour metrics, a clinical endpoint, and
+bootstrap confidence intervals — shared by both projects so every model is
+scored identically.
+
+The short version of the result: nothing done to the *objective* helped, and
+the one physical change that did help was feeding the network the pixels it was
+already being denied.
 
 ## The split problem (read this first)
 
@@ -52,21 +56,65 @@ run beside a `cache=ram` training job.
 
 ## Findings
 
-The headline result is a systematic negative: across nineteen training
-configurations, no change to the objective, the sampling, the loss weighting or
-the mask head improves on a stock baseline beyond seed-level variation. The
-measured noise floor is **±0.21 pp mAP** at two standard deviations over three
-seeds of the reference configuration.
+Across twenty-odd training configurations, **no change to the objective, the
+sampling, the loss weighting or the mask head** improves on the stock baseline
+beyond seed-level variation. The measured noise floor is **±0.21 pp segm mAP**
+and **±0.75 pp box mAP** at two standard deviations over three seeds of the
+reference configuration. Note the two floors differ by 3.5×, which is why a box
+gain and a mask gain of the same nominal size are not the same evidence.
 
-What the work establishes instead is in `paper/`:
+**One change did work, and it was not an objective.** Forty percent of the
+corpus is natively 1615×840 and was being trained at 640, a 2.5× reduction on
+the long side. Training at 1280 instead:
+
+| | baseline (his recipe, clean split) | 1280 | change |
+|---|---|---|---|
+| segm mAP | 0.1055 | **0.1204** | **+1.50 pp, +14.2 % relative** |
+| AP75 | 0.0661 | 0.0974 | +47.4 % relative |
+| box mAP | 0.1551 | 0.1568 | +0.17 pp, inside the ±0.75 pp floor |
+
+The mechanism holds up under the checks that killed earlier candidates. The box
+gain is statistically nothing, so the improvement cannot be detection-side; and
+AP75 rising seven times harder than AP50 is what better localisation looks like
+rather than what a ranking artefact looks like. Per class: caries +35 %,
+periapical lesion +29 %, root canal treatment +40 %. Two caveats stand: the arm
+fine-tunes from the converged baseline, so it carries extra epochs, and it is a
+single seed. The mitigating evidence on the first is that extra epochs have
+*hurt* everywhere else here — the baseline peaked at epoch 26 and lost 1.68 pp
+by epoch 50.
+
+An earlier pair of arms raised the *prototype* resolution while leaving the
+input downsampled and came out worst of everything tried (−1.30 and −2.02 pp).
+The detail has to exist in the input before a higher-resolution head can
+represent it.
+
+**A ceiling that no architecture crosses.** Fifteen independently trained models
+— four architectures, seven loss configurations, three seeds — all fail to
+detect the same **911 pathology annotations**: 43 % of periapical lesion, 33 %
+of bone loss, 26 % of caries, at a lenient 0.15 confidence and 0.10 box IoU.
+The 1280 model, which improved caries by 35 %, recovers **2.7 %** of them. They
+are therefore not small findings starved by downsampling; they are label
+problems, and they bound what any model on this corpus can achieve.
+`tools/universal_misses.py` regenerates the list.
+
+**External validation.** Zero-shot on DENTEX 2023 (MICCAI, professionally
+annotated), our caries detector is **73.6 % precise** at tooth level — far more
+useful than its 0.094 internal mAP suggests, because that mAP is measured
+against pixel-exact lesion outlines. See the granularity caveat below.
+
+What the work establishes beyond the models is in `paper/`:
 
 | | |
 |---|---|
 | the distributed split cannot support evaluation | 95.9 % of test shares source images with train |
 | perceptual hashing alone is not a leakage test here | ~100 % false-positive rate on this modality |
 | the mask representation ceiling is real but not binding | model reaches 78 % of a ceiling it never touches |
+| the mask deficit is coefficient prediction, not representation | 85 % head, 15 % basis, by closed-form oracle fit |
+| that attribution is correct but not actionable | more capacity leaves masks unchanged; direct supervision makes them worse |
 | distance metrics on per-model subsets invert their sign | HD95 flips from −17.3 % to significantly worse |
 | group means over low-support classes fabricate results | 98 % of one gain came from a 2-instance class |
+| segmentation AP rises on a purely detection-side change | +0.64 pp mAP with masks measurably no better |
+| cross-corpus AP is meaningless at differing annotation granularity | 0.0000 AP from a 19× box-area ratio, not a failure |
 | the published logit-adjustment constant does not transfer | +11.47 logit shift at 34,320:1 imbalance |
 
 `paper/benchmark_paper.md` is the submission-shaped write-up;
@@ -84,6 +132,10 @@ rebuilds all three with pdflatex and bibtex.
 | `tools/build_clean_dataset.py` | materialises a split (symlinks) + rebuilds COCO from polygons | asserts one identical category vocabulary across splits |
 | `tools/yolo_polygons_to_coco.py` | YOLO polygons → COCO instances (the shipped COCO has empty `segmentation`) | round-trip scores mAP 1.0 on bbox **and** segm |
 | `tools/class_counts.py` | per-class **image-level** and instance-level counts per split | flags the classes that cannot support a per-class claim |
+| `tools/oracle_coefficients.py` | closed-form best coefficients from the model's own prototypes; splits the mask deficit into basis vs head | scores at both prototype and full resolution, since only the latter is comparable to the achieved number |
+| `tools/universal_misses.py` | ground truth that EVERY model in the zoo fails to detect; `--probe` holds one model out to test whether it recovers them | criterion deliberately lenient (0.15 conf, 0.10 IoU) so a miss means absent, not hard |
+| `tools/dentex_to_coco.py` | DENTEX 2023 disease subset into our vocabulary for external validation | carries our full 31-class list so predictions need no translation; reports the merge of deep caries explicitly |
+| `tools/make_subset.py` | learning-curve corpora at a given fraction | stratified on each image's rarest class, so every fraction keeps all 31 classes and data quantity is not confounded with class coverage |
 | `tools/inspect_checkpoint.py` | checkpoint identity + minimal `--finetune_ignore` cover | derives the cover and proves it matches no non-head tensor |
 | `dino_longtail/` | logit-adjusted focal loss applied in **both** the Hungarian cost and the loss, Seesaw variant, frequency-aware denoising, repeat-factor sampler, class-balanced control | unit tests on gradient direction, head/tail asymmetry, cost consistency |
 | `yolov8_seg_longtail/` | stock baseline (isolated control arm), rare-class copy-paste, class-balanced weighting, band-Dice boundary loss, COCO prediction export | trains end-to-end on CPU; RLE export scores 1.0 |
@@ -215,8 +267,19 @@ Stated here rather than discovered later:
 - **No comparison against tuned published boundary or class-imbalance losses.**
   The baselines are the stock objectives, which is a necessary control but not a
   sufficient one for a method claim.
-- **Single backbone, single dataset.** No cross-backbone transfer and no
-  external validation set, so no long-tail claim is made in any headline.
+- **The resolution result carries two confounds.** It fine-tunes from the
+  converged baseline rather than training from scratch, so it has seen more
+  epochs, and it is a single seed. A from-scratch matched-budget run and seed
+  replicates are the tests that would settle it.
+- **Single backbone; external validation is zero-shot and partial.** DENTEX
+  covers three of our classes and is a different clinic, machine and annotation
+  protocol, so its numbers are a lower bound on transferable performance and
+  never a DENTEX-native result. Its caries and periapical boxes mark the
+  affected *tooth* where ours mark the *lesion*, a 19× area ratio, so raw IoU
+  comparison on those classes is invalid and only the tooth-level figures mean
+  anything. Impacted tooth, where both corpora agree on granularity, is the
+  control: 0.490 here against 0.290 zero-shot, which prices the domain gap at a
+  41 % relative drop.
 
 ## Data
 
