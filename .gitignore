@@ -81,3 +81,10 @@ data_frac75/
 data_clean_dn/
 data_selftrain/
 data_tooth/
+
+# latex build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
