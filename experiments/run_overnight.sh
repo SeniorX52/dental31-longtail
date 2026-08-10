@@ -64,7 +64,7 @@ fi
 # the reasoning for both, waits for the GPU to be free, guards completion before
 # scoring, and runs the paired contour comparison against S0 on common cases.
 echo "[$(stamp)] stage 2: coefficient-head arms (K1 then K2)"
-./run_coeff_arms.sh
+experiments/run_coeff_arms.sh
 
 echo "[$(stamp)] overnight chain done"
 echo
