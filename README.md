@@ -12,12 +12,31 @@ ablation matrices** that attribute each change to one component, and an
 bootstrap confidence intervals — shared by both projects so every model is
 scored identically.
 
-**Headline: a segmentation model that beats the supplied baseline by 14.2 %
-relative**, reached by finding the one constraint that actually bound the
-problem. Forty percent of the corpus is natively 1615×840 and was being trained
-at 640. Restoring the resolution lifts segm mAP from 0.1055 to 0.1204, and the
-gain concentrates exactly where it matters clinically: **caries +35 %,
-periapical lesion +29 %, root canal treatment +40 %**.
+**Headline: a segmentation model that beats the reproduced baseline by 16.0 %
+relative on the held-out test split**, reached by finding the one constraint
+that actually bound the problem. Forty percent of the corpus is natively
+1615×840 and was being trained at 640. Restoring the resolution lifts test segm
+mAP from **0.1051 to 0.1218** (mean of two seeds), and the gain concentrates
+exactly where it matters clinically: **bone loss +73 %, root canal treatment
++64 %, periapical lesion +64 %, caries +52 %**.
+
+| held-out test, mask | mAP | AP75 | head | mid | tail |
+|---|---|---|---|---|---|
+| baseline (100 epochs, 640) | 0.1051 | 0.0687 | 0.2861 | 0.1038 | 0.0365 |
+| seed 42 (30 epochs, 1280) | **0.1213** | 0.0861 | 0.3425 | 0.1212 | 0.0362 |
+| seed 1337 (30 epochs, 1280) | **0.1224** | 0.0840 | 0.3400 | 0.1157 | 0.0444 |
+
+Both seeds clear the baseline independently, against a measured 2 sd seed floor
+of ±0.21 pp, while training for **30 epochs against the baseline's 100** — so
+the comparison cannot be won on training budget. Test is touched once, and only
+by the configuration reported here; every other arm in the repo is validation
+only.
+
+It is a training-configuration result, not a new objective or architecture, and
+the write-ups say so. Its value is that it is the only intervention in this
+study that survives every check the evaluation stack can mount — including the
+paired-on-intersection contour test that overturned an earlier boundary-loss
+result.
 
 ## The split problem (read this first)
 

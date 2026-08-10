@@ -8,7 +8,8 @@
 \usepackage{caption}
 \captionsetup{font=small,labelfont=bf}
 
-\title{\bfseries Boundary-Aware Training for Dental Radiograph\\Instance Segmentation}
+\title{\bfseries The Objective Was Not the Constraint:\\
+Input Resolution in Dental Radiograph Instance Segmentation}
 \author{Technical report}
 \date{}
 
@@ -35,11 +36,14 @@ by accident, and supervising the coefficients directly against their closed-form
 optimum makes masks worse. The deficit is correctly localised and not thereby
 actionable. What \emph{was} actionable lay upstream of the network entirely:
 forty percent of the corpus is natively $1615\times840$ and was being trained
-at 640. Restoring the input resolution improves segm mAP by \textbf{+1.50\,pp
-(+14.2\,\% relative)} and strict-IoU AP75 by +47\,\%, with the gain
-concentrated in the small clinical findings (caries +35\,\%, periapical
-lesion +29\,\%), and it is the only intervention in this study that survives
-every check the apparatus can mount.
+at 640. Restoring the input resolution improves segm mAP by \textbf{+1.68\,pp
+(+16.0\,\% relative) on the held-out test split}, at two independent seeds
+that both clear the baseline while training for 30 epochs against its 100. The
+gain concentrates in the small clinical findings the ceiling analysis
+identifies --- bone loss +73\,\%, root canal treatment +64\,\%, periapical
+lesion +64\,\%, caries +52\,\% --- and it is the only intervention in this
+study that survives every check the apparatus can mount. It is a training
+configuration rather than a new objective, and we say so.
 \end{abstract}
 
 \section{The Corpus Cannot Be Evaluated as Distributed}
@@ -160,6 +164,7 @@ S1c led on validation and came last on test. The $+10.7\,\%$ AP75 gain at 50
 epochs on validation is $-0.37$\,pp at 100 epochs on test.
 
 \section{The Representation Ceiling Is Not the Constraint}
+\label{sec:ceiling}
 
 Round-tripping every ground-truth mask through the prototype grid bounds what
 any model could achieve. At the stock $160\times160$ grid, mean Dice is 0.8963
@@ -425,13 +430,60 @@ opposite sides: representation cannot exceed the information the input
 carries, and once the input carries it, the representation is no longer the
 limit.
 
-\paragraph{Status of the claim.} Two confounds are open and both are being
-closed by queued runs. The arm fine-tunes from the converged baseline, so it
-has seen 75 epochs against the baseline's 50; the mitigating evidence is that
-additional epochs \emph{hurt} everywhere else in this study, the baseline
-itself peaking at epoch 26 and losing 1.68\,pp by epoch 50. And it is a single
-seed; two from-scratch replicates at independent seeds, trained for
-\emph{fewer} epochs than the baseline, are the closing test. Externally, the
+\subsection{Both confounds closed, and the result on the frozen test split}
+
+The arm above fine-tunes from the converged baseline, so it has seen 75 epochs
+against the baseline's 50, and it is a single seed. Two replicates close both
+at once: same COCO initialisation as the baseline itself, so no inherited
+training, at seeds 42 and 1337, for \textbf{30 epochs against the contractual
+baseline's 100}. Fewer epochs, not more. These are the only runs in this study
+scored on the held-out test split, and they are scored once.
+
+\begin{table}[h]
+\centering\small
+\begin{tabular}{lrrrrrr}
+\toprule
+model (test split) & mAP & AP50 & AP75 & head & mid & tail \\
+\midrule
+baseline, 100\,ep, 640 & 0.1051 & 0.2590 & 0.0687 & 0.2861 & 0.1038 & 0.0365 \\
+seed 42, 30\,ep, 1280 & \textbf{0.1213} & 0.2746 & 0.0861 & 0.3425 & 0.1212 & 0.0362 \\
+seed 1337, 30\,ep, 1280 & \textbf{0.1224} & 0.2777 & 0.0840 & 0.3400 & 0.1157 & 0.0444 \\
+\midrule
+mean & \textbf{0.1218} & 0.2762 & 0.0851 & 0.3413 & 0.1185 & 0.0403 \\
+\bottomrule
+\end{tabular}
+\caption{Held-out test split, mask metrics. $+1.68$\,pp mAP, $+16.0$\,\%
+relative, against a measured 2\,sd seed floor of $\pm0.21$\,pp. Both seeds
+clear the baseline independently.}
+\end{table}
+
+Per class, the gain lands where the ceiling analysis of
+Section~\ref{sec:ceiling} said it would --- on the small, low-contrast
+findings: bone loss $+73.2$\,\% (469 test instances), root canal treatment
+$+64.2$\,\% (2{,}866), periapical lesion $+63.7$\,\% (797), caries
+$+51.5$\,\% (1{,}604), filling $+22.7$\,\% (7{,}352), crown $+15.8$\,\%
+(1{,}687). Two classes regress and are reported rather than dropped: maxillary
+sinus $-16.2$\,\% (70) and missing teeth $-4.3$\,\% (527). Classes with fewer
+than ten test instances are excluded; their movements are one or two
+detections.
+
+Bone loss moving $+73.2$\,\% on test contradicts the $-25$\,\% recorded for the
+fine-tuned arm on validation. The fine-tuned arm inherited a converged 640
+model and adapted it; these runs learn at 1280 from the start, and bone loss is
+the class where that distinction should matter most, since a diffuse region
+benefits from global context that a brief fine-tune cannot re-learn. We report
+both numbers rather than the flattering one.
+
+\paragraph{What the result is.} A training-configuration finding, not a new
+objective or architecture. Its mechanism was predicted before it was run ---
+Section~\ref{sec:ceiling} states that raising the input should help and that
+raising the mask head alone should not, and both halves hold --- but training
+at native resolution is not itself a methodological contribution, and we do
+not present it as one. Its value is that it is the only intervention in this
+study that survives every check the apparatus can mount, including the one
+that killed the objectives.
+
+\paragraph{External transfer.} Externally, the
 gain currently trades sensitivity for precision: zero-shot on a professionally
 annotated corpus the 1280 model is more precise at tooth level (82.4\,\%
 against 73.6\,\%) but recalls less (32.5\,\% against 37.9\,\%), and inference

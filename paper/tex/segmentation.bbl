@@ -1,0 +1,23 @@
+\begin{thebibliography}{1}
+
+\bibitem{cheng2021boundaryiou}
+Bowen Cheng, Ross Girshick, Piotr Doll{\'a}r, Alexander~C. Berg, and Alexander
+  Kirillov.
+\newblock Boundary {IoU}: Improving object-centric image segmentation
+  evaluation.
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{milletari2016vnet}
+Fausto Milletari, Nassir Navab, and Seyed-Ahmad Ahmadi.
+\newblock {V-Net}: Fully convolutional neural networks for volumetric medical
+  image segmentation.
+\newblock In {\em 3DV}, 2016.
+
+\bibitem{shi2016subpixel}
+Wenzhe Shi, Jose Caballero, Ferenc Husz{\'a}r, Johannes Totz, Andrew~P. Aitken,
+  Rob Bishop, Daniel Rueckert, and Zehan Wang.
+\newblock Real-time single image and video super-resolution using an efficient
+  sub-pixel convolutional neural network.
+\newblock In {\em CVPR}, 2016.
+
+\end{thebibliography}

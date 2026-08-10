@@ -439,15 +439,100 @@ published constant does not transfer to this imbalance". D5 at `tau = 1.0`
 remains in the frozen matrix exactly as run, and the sweep is reported as a
 sweep.
 
-## 10. What is not claimed
+## 10. Input resolution — the intervention that works (10 Aug)
+
+Sections 4 to 7 record objectives that did not move the number. Section 5
+explains why, and the explanation points upstream of the network: the mask is
+band-limited by the prototype grid before training starts, and that grid is a
+fraction of the *input*. Forty percent of this corpus is natively 1615×840 and
+was being trained at 640, a 2.5× downsample of the long side.
+
+Two models were trained from the same COCO initialisation as the baseline
+itself, at 1280, at seeds 42 and 1337, for **30 epochs against the baseline's
+100**. Fewer epochs, not more, so the comparison cannot be won on budget.
+
+### Held-out test, mask metrics
+
+| model | mAP | AP50 | AP75 | head | mid | tail |
+|---|---|---|---|---|---|---|
+| baseline (100 ep, 640) | 0.1051 | 0.2590 | 0.0687 | 0.2861 | 0.1038 | 0.0365 |
+| **seed 42 (30 ep, 1280)** | **0.1213** | 0.2746 | 0.0861 | 0.3425 | 0.1212 | 0.0362 |
+| **seed 1337 (30 ep, 1280)** | **0.1224** | 0.2777 | 0.0840 | 0.3400 | 0.1157 | 0.0444 |
+| mean of seeds | **0.1218** | 0.2762 | 0.0851 | 0.3413 | 0.1185 | 0.0403 |
+
+**+1.68 pp mAP, +16.0 % relative**, against a 2 sd seed noise floor of ±0.21 pp.
+AP75 rises 23.8 % and head AP 19.3 %. Both seeds clear the baseline
+independently; this is not one lucky run.
+
+### Held-out test, box metrics
+
+The same models, scored as detectors:
+
+| model | mAP | AP50 | AP75 | head | mid | tail |
+|---|---|---|---|---|---|---|
+| YOLOv8x-seg baseline | 0.1527 | 0.2971 | 0.1402 | 0.3837 | 0.1593 | 0.0583 |
+| DINO-DETR baseline | 0.1570 | 0.3086 | 0.1345 | 0.3864 | 0.1677 | 0.0598 |
+| seed 42 | 0.1622 | 0.3000 | 0.1538 | 0.4090 | 0.1693 | 0.0612 |
+| seed 1337 | 0.1656 | 0.3153 | 0.1578 | 0.4087 | 0.1651 | 0.0726 |
+
+Against its own family the gain is separable (+0.95 and +1.29 pp against a
+±0.75 pp box floor). Against DINO-DETR it is +0.52 and +0.86 pp — level with,
+and only the second seed clears the floor. **The honest reading is that
+resolution lifts the segmentation model to parity with the detection baseline,
+not past it.**
+
+### Per-class, held-out test, mask AP
+
+The gain concentrates in the small, low-contrast findings the ceiling table
+predicted, and these are the classes a clinician reads:
+
+| class | test instances | baseline | seed 42 | change |
+|---|---|---|---|---|
+| Bone Loss | 469 | 0.0136 | 0.0235 | **+73.2 %** |
+| Root Canal Treatment | 2866 | 0.1150 | 0.1888 | **+64.2 %** |
+| Periapical lesion | 797 | 0.0214 | 0.0351 | **+63.7 %** |
+| Caries | 1604 | 0.0855 | 0.1295 | **+51.5 %** |
+| Root Piece | 392 | 0.1464 | 0.2002 | +36.7 % |
+| Mandibular Canal | 92 | 0.1116 | 0.1383 | +24.0 % |
+| Filling | 7352 | 0.2756 | 0.3382 | +22.7 % |
+| Crown | 1687 | 0.4490 | 0.5201 | +15.8 % |
+| impacted tooth | 4192 | 0.5053 | 0.5358 | +6.0 % |
+| maxillary sinus | 70 | 0.2304 | 0.1931 | **−16.2 %** |
+| Missing teeth | 527 | 0.1528 | 0.1462 | −4.3 % |
+
+Two regressions are reported alongside the gains rather than omitted. Classes
+with fewer than 10 test instances are excluded from this table entirely; their
+movements are one or two detections and are flagged `unstable` in the per-class
+JSON.
+
+### What this result is, and is not
+
+It is a **training-configuration** finding, not a new objective or architecture.
+The mechanism is measured rather than assumed — section 5 predicted, before this
+was run, that raising the *input* would help and that raising the mask head
+alone would not, and both halves of that prediction now hold. But a reviewer is
+entitled to say that training at native resolution is not a methodological
+contribution, and the write-up says so plainly rather than dressing it up.
+
+Two confounds that applied to the earlier fine-tuned version are closed here:
+these runs start from the same COCO weights as the baseline, so they carry no
+extra training, and there are two seeds rather than one.
+
+---
+
+## 11. What is not claimed
 
 - **No long-tail improvement.** The evaluation split has no statistical power
   for it: 16 of 31 classes occur in fewer than 10 validation images and eleven
   tail classes score exactly zero. No such claim appears in any title, abstract
   or conclusion.
-- **No improvement over the baseline on the held-out test split**, on the
-  evidence in section 4. The single metric where the method leads is head-class
-  AP.
+- **No improvement from the boundary or class-weighting objectives on the
+  held-out test split**, on the evidence in section 4. The single metric where
+  those arms lead is head-class AP. The test-split improvement in section 10
+  comes from input resolution and from nothing else in this study.
+- **No claim that the objective work explains the section 10 result.** They are
+  independent: the resolution runs carry no class weighting and no boundary
+  term. Section 5 is the link between them, and it is a diagnosis, not a method.
 - **No improvement in contour fidelity**, on the direct evidence in section 6.
 - **No reduction in clinical measurement error**, on the evidence in section 7.
   The single positive result across the three independent measurements is the
@@ -458,6 +543,16 @@ sweep.
   baseline and 4.41 pp below plain reweighting, with tail AP at exactly zero.
   Only frequency-aware denoising alone is nominally above baseline, by 0.08 pp,
   which is inside the noise band.
-- **Single seed** on all finals. Determinism is exact — two independent runs of
-  the same configuration at the same seed agree to six decimals — so seed
-  variation is the only source of spread, and it has not yet been measured.
+- **Single seed on the objective finals** (sections 4, 6, 7). Determinism is
+  exact — two independent runs of the same configuration at the same seed agree
+  to six decimals — so seed variation is the only source of spread. It has been
+  measured for the reference configuration (2 sd: mAP ±0.21 pp, AP75 ±0.50 pp)
+  but not per arm. The section 10 result carries **two** seeds; a third is
+  training, because the protocol promises three-seed final tables.
+- **No comparison against tuned published boundary or imbalance losses yet.**
+  Four comparators were implemented on 04 Aug and none produced a number: this
+  build's `crop_mask` zeroes outside the box with two in-place multiplies, which
+  destroys the sigmoid output that autograd needs, so every comparator died in
+  the backward pass. Fixed 10 Aug (`crop_to_box`); soft Dice and Kervadec
+  boundary loss are queued. Until they land, "beats existing boundary-aware
+  losses" is unsupported and is not claimed anywhere.

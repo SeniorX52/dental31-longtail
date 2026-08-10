@@ -1,0 +1,38 @@
+\begin{thebibliography}{1}
+
+\bibitem{cui2019classbalanced}
+Yin Cui, Menglin Jia, Tsung-Yi Lin, Yang Song, and Serge Belongie.
+\newblock Class-balanced loss based on effective number of samples.
+\newblock In {\em CVPR}, 2019.
+
+\bibitem{gupta2019lvis}
+Agrim Gupta, Piotr Doll{\'a}r, and Ross Girshick.
+\newblock {LVIS}: A dataset for large vocabulary instance segmentation.
+\newblock In {\em CVPR}, 2019.
+
+\bibitem{kang2020decoupling}
+Bingyi Kang, Saining Xie, Marcus Rohrbach, Zhicheng Yan, Albert Gordo, Jiashi
+  Feng, and Yannis Kalantidis.
+\newblock Decoupling representation and classifier for long-tailed recognition.
+\newblock In {\em ICLR}, 2020.
+
+\bibitem{menon2021logit}
+Aditya~Krishna Menon, Sadeep Jayasumana, Ankit~Singh Rawat, Himanshu Jain,
+  Andreas Veit, and Sanjiv Kumar.
+\newblock Long-tail learning via logit adjustment.
+\newblock In {\em ICLR}, 2021.
+
+\bibitem{wang2019calibration}
+Tao Wang, Yu~Li, Bingyi Kang, Junnan Li, Jun~Hao Liew, Sheng Tang, Steven Hoi,
+  and Jiashi Feng.
+\newblock Classification calibration for long-tail instance segmentation.
+\newblock {\em arXiv preprint arXiv:1910.13081}, 2019.
+
+\bibitem{zhang2023dino}
+Hao Zhang, Feng Li, Shilong Liu, Lei Zhang, Hang Su, Jun Zhu, Lionel~M. Ni, and
+  Heung-Yeung Shum.
+\newblock {DINO}: {DETR} with improved denoising anchor boxes for end-to-end
+  object detection.
+\newblock In {\em ICLR}, 2023.
+
+\end{thebibliography}

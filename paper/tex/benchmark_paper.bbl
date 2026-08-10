@@ -1,0 +1,100 @@
+\begin{thebibliography}{10}
+
+\bibitem{cheng2021boundaryiou}
+Bowen Cheng, Ross Girshick, Piotr Doll{\'a}r, Alexander~C. Berg, and Alexander
+  Kirillov.
+\newblock Boundary {IoU}: Improving object-centric image segmentation
+  evaluation.
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{cui2019classbalanced}
+Yin Cui, Menglin Jia, Tsung-Yi Lin, Yang Song, and Serge Belongie.
+\newblock Class-balanced loss based on effective number of samples.
+\newblock In {\em CVPR}, 2019.
+
+\bibitem{ghiasi2021copypaste}
+Golnaz Ghiasi, Yin Cui, Aravind Srinivas, Rui Qian, Tsung-Yi Lin, Ekin~D.
+  Cubuk, Quoc~V. Le, and Barret Zoph.
+\newblock Simple copy-paste is a strong data augmentation method for instance
+  segmentation.
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{gupta2019lvis}
+Agrim Gupta, Piotr Doll{\'a}r, and Ross Girshick.
+\newblock {LVIS}: A dataset for large vocabulary instance segmentation.
+\newblock In {\em CVPR}, 2019.
+
+\bibitem{hamamci2023dentex}
+Ibrahim~Ethem Hamamci, Sezgin Er, Enis Simsar, Anjany Sekuboyina, Mustafa
+  Gundogar, Bernd Stadlinger, Albert Mehl, and Bjoern Menze.
+\newblock {DENTEX}: An abnormal tooth detection with dental enumeration and
+  diagnosis benchmark for panoramic x-rays.
+\newblock {\em arXiv preprint arXiv:2305.19112}, 2023.
+
+\bibitem{kang2020decoupling}
+Bingyi Kang, Saining Xie, Marcus Rohrbach, Zhicheng Yan, Albert Gordo, Jiashi
+  Feng, and Yannis Kalantidis.
+\newblock Decoupling representation and classifier for long-tailed recognition.
+\newblock In {\em ICLR}, 2020.
+
+\bibitem{karimi2019hausdorff}
+Davood Karimi and Septimiu~E. Salcudean.
+\newblock Reducing the {H}ausdorff distance in medical image segmentation with
+  convolutional neural networks.
+\newblock {\em IEEE Transactions on Medical Imaging}, 2019.
+
+\bibitem{ke2022transfiner}
+Lei Ke, Martin Danelljan, Xia Li, Yu-Wing Tai, Chi-Keung Tang, and Fisher Yu.
+\newblock Mask transfiner for high-quality instance segmentation.
+\newblock In {\em CVPR}, 2022.
+
+\bibitem{kervadec2018boundary}
+Hoel Kervadec, Jihene Bouchtiba, Christian Desrosiers, Eric Granger, Jose Dolz,
+  and Ismail~Ben Ayed.
+\newblock Boundary loss for highly unbalanced segmentation.
+\newblock In {\em MIDL}, 2018.
+
+\bibitem{kirillov2020pointrend}
+Alexander Kirillov, Yuxin Wu, Kaiming He, and Ross Girshick.
+\newblock {PointRend}: Image segmentation as rendering.
+\newblock In {\em CVPR}, 2020.
+
+\bibitem{menon2021logit}
+Aditya~Krishna Menon, Sadeep Jayasumana, Ankit~Singh Rawat, Himanshu Jain,
+  Andreas Veit, and Sanjiv Kumar.
+\newblock Long-tail learning via logit adjustment.
+\newblock In {\em ICLR}, 2021.
+
+\bibitem{milletari2016vnet}
+Fausto Milletari, Nassir Navab, and Seyed-Ahmad Ahmadi.
+\newblock {V-Net}: Fully convolutional neural networks for volumetric medical
+  image segmentation.
+\newblock In {\em 3DV}, 2016.
+
+\bibitem{shi2016subpixel}
+Wenzhe Shi, Jose Caballero, Ferenc Husz{\'a}r, Johannes Totz, Andrew~P. Aitken,
+  Rob Bishop, Daniel Rueckert, and Zehan Wang.
+\newblock Real-time single image and video super-resolution using an efficient
+  sub-pixel convolutional neural network.
+\newblock In {\em CVPR}, 2016.
+
+\bibitem{wang2021seesaw}
+Jiaqi Wang, Wenwei Zhang, Yuhang Zang, Yuhang Cao, Jiangmiao Pang, Tao Gong,
+  Kai Chen, Ziwei Liu, Chen~Change Loy, and Dahua Lin.
+\newblock Seesaw loss for long-tailed instance segmentation.
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{wang2019calibration}
+Tao Wang, Yu~Li, Bingyi Kang, Junnan Li, Jun~Hao Liew, Sheng Tang, Steven Hoi,
+  and Jiashi Feng.
+\newblock Classification calibration for long-tail instance segmentation.
+\newblock {\em arXiv preprint arXiv:1910.13081}, 2019.
+
+\bibitem{zhang2021refinemask}
+Gang Zhang, Xin Lu, Jingru Tan, Jianmin Li, Zhaoxiang Zhang, Quanquan Li, and
+  Xiaolin Hu.
+\newblock {RefineMask}: Towards high-quality instance segmentation with
+  fine-grained features.
+\newblock In {\em CVPR}, 2021.
+
+\end{thebibliography}
