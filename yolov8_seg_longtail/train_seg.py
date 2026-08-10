@@ -728,6 +728,15 @@ def main(argv: Optional[List[str]] = None) -> None:
         # back to 160 and discard the change entirely.
         overrides["mask_ratio"] = 2
         print("mask_ratio forced to 2 to match the input/2 prototype grid")
+    # The validator hardcodes the input/4 prototype layout in two places and
+    # ignores mask_ratio entirely, so it compares ground truth at input/4
+    # against predictions at input/2 and dies on the shape mismatch. That is
+    # what killed abl_HR1280hp. Patch it to the stride actually in use; a no-op
+    # at the stock stride of 4.
+    from yolov8_seg_longtail.proto_scale_patch import install as _install_proto_patch
+    if _install_proto_patch(overrides.get("mask_ratio", 4)):
+        print("segment validator patched for the input/%d prototype grid"
+              % overrides.get("mask_ratio", 4))
     if args.proto_src == "p2" or args.no_val:
         overrides["val"] = False
     trainer = LongTailSegTrainer(overrides=overrides,

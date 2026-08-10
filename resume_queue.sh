@@ -24,8 +24,12 @@ running() {   # is a driver with this argv[1] already alive?
   return 1
 }
 
-for s in run_hr1600.sh run_compound.sh run_phase2.sh run_k2seeds.sh \
-         run_labelnoise.sh run_selftrain.sh run_toothstage.sh run_bestof.sh; do
+# run_hr1600.sh and run_compound.sh are deliberately absent: their cells are
+# finished, and run_compound.sh waits only on the drivers that preceded it, so
+# relaunching it would let it start a training alongside run_phase2.sh. Its one
+# unfinished cell, abl_HR1280hp, is owned by run_protohp.sh instead.
+for s in run_phase2.sh run_k2seeds.sh run_labelnoise.sh run_selftrain.sh \
+         run_toothstage.sh run_protohp.sh run_bestof.sh; do
   [ -x "$s" ] || { echo "  $s missing or not executable, skipped"; continue; }
   if running "$s"; then
     echo "  $s already running"
