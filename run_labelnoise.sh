@@ -84,7 +84,8 @@ score() {  # tag imgsz
       --iou-type segm --out "reports/eval_${tag}_valid" 2>&1 | tail -3
 }
 echo "[$(stamp)] label-noise driver queued"
-wait_on run_maskdino.sh run_hr1600.sh run_compound.sh run_phase2.sh run_k2seeds.sh
+wait_on run_final.sh run_extras.sh run_protohp.sh
+
 
 # 1. train-split scans (an annotation unfittable by the model that TRAINED on
 #    it is the strongest cheap label-error signal we can compute)

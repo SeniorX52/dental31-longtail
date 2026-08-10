@@ -102,6 +102,29 @@ def build_class_weights(counts: torch.Tensor, scheme: str) -> Optional[torch.Ten
     return effective_number_weights(counts, beta=float(scheme))
 
 
+def crop_to_box(x: torch.Tensor, xyxy: torch.Tensor) -> torch.Tensor:
+    """Non-mutating box crop.
+
+    ultralytics 8.4.108's `crop_mask` zeroes outside the box with two IN-PLACE
+    multiplies on the tensor it is handed, and returns that same tensor. Passing
+    it an activation therefore destroys a value autograd still needs:
+
+        RuntimeError: one of the variables needed for gradient computation has
+        been modified by an inplace operation: [torch.cuda.HalfTensor
+        [111, 160, 160]], which is output 0 of SigmoidBackward0, is at version 2
+
+    Version 2 is the two multiplies. This is what stopped all four published
+    comparator losses from producing a number, and why our own band term was
+    unaffected: the band term crops the output of a subtraction, whose backward
+    does not need its output, while every comparator crops `pred_mask.sigmoid()`
+    directly and sigmoid's backward does need its output.
+
+    Cloning changes no value, only ownership, so arms trained before this still
+    reproduce bit-for-bit.
+    """
+    return crop_mask(x.clone(), xyxy)
+
+
 def soft_boundary(x: torch.Tensor, band: int = 3) -> torch.Tensor:
     """Differentiable boundary band: morphological gradient via max-pool.
 
@@ -329,7 +352,7 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
             den = c_star.float().pow(2).mean(dim=1) + 1e-6
             coeff_loss = (num / den).clamp_max(self.coeff_clip).sum()
         bce = F.binary_cross_entropy_with_logits(pred_mask, gt_mask, reduction="none")
-        loss = (crop_mask(bce, xyxy).mean(dim=(1, 2)) / area).sum()
+        loss = (crop_to_box(bce, xyxy).mean(dim=(1, 2)) / area).sum()
         if self.boundary_weight > 0 and self.mask_aux != "none":
             p = pred_mask.sigmoid()
             if self.mask_aux == "band":
@@ -337,19 +360,19 @@ class BoundaryAwareSegLoss(v8SegmentationLoss):
                 # map, then crop -- so every arm trained before this refactor
                 # still reproduces bit-for-bit. Cropping first would let the
                 # crop edge register as contour and change the numbers.
-                pb = crop_mask(soft_boundary(p), xyxy)
-                gb = crop_mask(soft_boundary(gt_mask), xyxy)
+                pb = crop_to_box(soft_boundary(p), xyxy)
+                gb = crop_to_box(soft_boundary(gt_mask), xyxy)
                 inter = (pb * gb).sum(dim=(1, 2))
                 denom = pb.sum(dim=(1, 2)) + gb.sum(dim=(1, 2))
                 aux = 1.0 - (2 * inter + 1.0) / (denom + 1.0)
             elif self.mask_aux == "kervadec":
                 # the distance map is a property of the ground truth, so it is
                 # built on the full map for the same reason, then cropped
-                phi = crop_mask(comparator_losses.signed_distance(gt_mask), xyxy)
-                aux = (phi * crop_mask(p, xyxy)).mean(dim=(1, 2))
+                phi = crop_to_box(comparator_losses.signed_distance(gt_mask), xyxy)
+                aux = (phi * crop_to_box(p, xyxy)).mean(dim=(1, 2))
             else:
                 fn = comparator_losses.get_aux_loss(self.mask_aux)
-                aux = fn(crop_mask(p, xyxy), crop_mask(gt_mask, xyxy))
+                aux = fn(crop_to_box(p, xyxy), crop_to_box(gt_mask, xyxy))
             loss = loss + self.boundary_weight * aux.sum()
         if self.coeff_weight > 0 and gt_mask.numel():
             loss = loss + self.coeff_weight * coeff_loss

@@ -64,7 +64,8 @@ wait_on() {
 }
 
 echo "[$(stamp)] proto-scale retry queued"
-wait_on run_phase2.sh run_k2seeds.sh run_labelnoise.sh run_selftrain.sh run_toothstage.sh
+wait_on run_final.sh run_extras.sh
+
 
 # The failed attempt left a run directory with no results.csv. Leaving it there
 # would make ultralytics resume from a checkpoint that does not exist.
