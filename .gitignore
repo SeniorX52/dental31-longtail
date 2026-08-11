@@ -20,6 +20,14 @@ data/
 # the explicit list above and reached the remote as a result, so match by prefix
 # rather than by enumeration.
 data_*/
+
+# ...except the anonymised COCO annotations. No imagery, no identifiers,
+# and they are what makes the reported numbers reproducible. This has to sit
+# after `data_*/` above, since git honours the last matching rule, and a file
+# cannot be re-included while its parent directory is still excluded.
+!data_coco/
+data_coco/*
+!data_coco/annotations/
 *.zip
 *.tar
 *.tar.gz
