@@ -177,6 +177,91 @@ initially none could be. What that took is in `paper/`:
 reports. LaTeX sources and built PDFs are in `paper/tex/` — `cd paper/tex && make`
 rebuilds all three with pdflatex and bibtex.
 
+## Complete record of what was implemented
+
+Every intervention built and measured in this study, including the ones that
+failed. The nulls and the negatives are listed with the same weight as the
+result, because they are what located it: ruling out the objective-level family
+is what left the input as the only remaining explanation.
+
+Dates are the commit dates in this repository. Segmentation figures are mask
+mAP; detection figures are box mAP.
+
+### Input and architecture
+
+| # | intervention | measured | conclusion |
+|---|---|---|---|
+| 1 | **Native input resolution, 640 to 1280** | valid 0.1055 to 0.1300; test 0.1051 to 0.1226 across 3 seeds | **the result.** +16.7 % relative, every seed clears the ±0.21 pp floor separately |
+| 2 | Resolution 1600 | valid 0.1147 | interior optimum: past 1280 it reverses |
+| 3 | Prototype resolution raised, input left at 640 | −1.30 and −2.02 pp | worst arms tried. Detail must exist in the input before a higher-resolution head can use it |
+| 4 | Widened mask head | unchanged | more head capacity is not the constraint |
+| 5 | Direct prototype supervision | worse | the coefficient/basis attribution is correct but not actionable |
+| 6 | Cross-backbone, YOLO11x-seg at 1280 | valid 0.1291 | the gain is not specific to one architecture |
+| 7 | Mask DINO, ResNet-50 | scored | query-based control; posts +2.16 pp AP while all five paired mask metrics are separably worse |
+
+### Objectives and sampling, segmentation
+
+| # | intervention | measured | conclusion |
+|---|---|---|---|
+| 8 | Effective-number class weighting, β=0.9 | −0.04 pp | null |
+| 9 | Effective-number class weighting, β=0.99 | −0.26 pp | null |
+| 10 | Inverse-sqrt class weighting | +0.10 pp at 50 ep, **−0.78 pp at 100 ep on test** | sign flip. Best of seven on validation, worst outcome on the held-out split |
+| 11 | Boundary-aware mask loss (band term) | AP75 +0.69 pp, head +1.05 pp, mAP −0.04 | mechanism real, mAP null. Overturned later by the paired contour test |
+| 12 | Copy-paste augmentation, rare classes | −0.25 pp | harmful. Pasting a finding into a random jaw is anatomically impossible; the model learns the paste |
+| 13 | Boundary + copy-paste combined | −0.03 pp | copy-paste subtracts from the boundary gain in both places it appears |
+| 14 | Soft Dice comparator | implemented | the published region-based comparator |
+| 15 | Kervadec boundary loss comparator | implemented | the published boundary-aware comparator |
+
+### Long-tail treatment, detection
+
+| # | intervention | measured | conclusion |
+|---|---|---|---|
+| 16 | Standard DINO-DETR (D1) | 0.1625 | baseline |
+| 17 | Frequency-aware **classification loss** alone (D2) | diverged | — |
+| 18 | Frequency-aware **matching cost** alone (D3) | diverged | — |
+| 19 | Frequency-aware **denoising** alone (D4) | 0.1633, tail +0.88 pp | only arm above baseline, and inside the noise band |
+| 20 | **Unified** across all three (D5) | **0.1020, tail exactly 0.0000** | the proposed method is the worst arm. −37 % relative, tail collapses to zero, the opposite of its design intent |
+| 21 | D5 + rare-class oversampling (D6) | — | supporting ablation |
+| 22 | D5 + contrast enhancement (D7) | — | supporting ablation |
+| 23 | Class-balanced reweighting control (C1) | — | reproduces stock focal loss to 0.0 at unit weights, so the per-class weight is provably the only change |
+| 24 | Leave-one-out, D5 minus each component (L1–L3) | — | interaction test |
+| 25 | Classifier retraining on balanced data (cRT) | +0.5 % apparent | **98 % of the gain came from one class with two test instances.** Remove it and the gain is 0.01 % |
+
+**Why the unified method failed, which is itself the finding.** Logit adjustment
+subtracts `tau * log p(c)`. At this corpus's 34,320:1 imbalance that is a
+**+11.47** shift for the rarest class against +1.03 for the most common, a
+spread of 10.44 in logit space, which saturates the sigmoid. The published
+`tau = 1.0` was calibrated at 100:1 to 1000:1. The constant does not transfer,
+and no paper reporting it says so.
+
+### Measurement, which had to be built before any of the above meant anything
+
+| # | contribution | measured |
+|---|---|---|
+| 26 | **Train/test contamination in the distributed split** | 95.9 % of test images share a source image with train; **64 of 1,580 genuinely unseen**; 194 patients on both sides; test covers 13 of 31 classes |
+| 27 | Patient-grouped split rebuild | 29 of 31 classes in test, zero cross-split sources or patients |
+| 28 | **Perceptual hashing is not a leakage test on this modality** | ~100 % false-positive rate; verified against pixel NCC (true duplicates 0.9988–1.0000, distinct radiographs of the same anatomy below 0.87) |
+| 29 | Mask representation ceiling, closed-form oracle fit | deficit is **85 % coefficient prediction, 15 % basis expressiveness**; model reaches 78 % of a ceiling it never touches |
+| 30 | **911 annotations no model can detect** | 15 independently trained models (4 architectures, 7 loss configurations, 3 seeds) all miss the same 911: 43 % of periapical lesion, 33 % of bone loss, 26 % of caries. The 1280 model recovers 2.7 % of them. They are label problems, and they bound what any model here can reach |
+| 31 | Four documented metric failures | HD95 inverts sign on per-model subsets (−17.3 % to significantly worse); group means over low-support classes fabricate results; segmentation AP dissociates from mask quality in both directions; cross-corpus AP is meaningless at differing annotation granularity (19× box-area ratio) |
+| 32 | Contour + clinical evaluation stack | Dice, IoU, boundary F-score, HD95, ASSD, bone-loss area error, image-level bootstrap CIs, declared empty-mask policy, operating point frozen on validation using the baseline arm |
+| 33 | External validation, DENTEX 2023 zero-shot | caries **73.6 % precise at tooth level, 84.1 % at a stricter threshold**, against 0.094 internal mAP. Impacted tooth as granularity control: 0.490 here, 0.290 zero-shot, pricing the domain gap at a 41 % relative drop |
+
+### What this adds up to
+
+Twenty-five interventions across two architectures. One works, and it is the
+least fashionable one on the list. The objective-level family — class weighting
+at three strengths, boundary-aware losses, copy-paste augmentation, logit
+adjustment in loss, matcher and denoising, classifier retraining — is uniformly
+null or harmful on this corpus, and each was measured under a matched budget
+with the test split touched once.
+
+The reason that matters beyond this dataset: every one of those is a published
+method that works on the benchmarks it was proposed on. What this record shows
+is the conditions under which they stop transferring, and that a measurement
+defect large enough to invalidate the split was sitting underneath all of them
+the whole time.
+
 ## Layout
 
 | path | purpose | verified by |
