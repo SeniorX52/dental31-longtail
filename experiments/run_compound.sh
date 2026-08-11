@@ -13,7 +13,7 @@
 # then LOSES 1.68 pp by epoch 50), one at each seed. If both land above the
 # baseline by a clear margin the headline claim is settled; if they scatter
 # back, the fine-tune was doing the work and the claim dies here rather than in
-# a client deliverable. The training size adapts to whichever of 1280/1600 the
+# a headline result. The training size adapts to whichever of 1280/1600 the
 # native-resolution probe crowns, read from its report at runtime.
 #
 # Cell 3, high-resolution prototypes AT high input resolution. XP3 raised the

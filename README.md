@@ -80,10 +80,10 @@ run beside a `cache=ram` training job.
 
 ### The result
 
-Trained at 1280 instead of 640, against the client's own recipe reproduced on
+Trained at 1280 instead of 640, against the reference recipe reproduced on
 the corrected split at matched settings:
 
-| | baseline (his recipe, clean split) | 1280 | change |
+| | baseline (reference recipe, clean split) | 1280 | change |
 |---|---|---|---|
 | segm mAP | 0.1055 | **0.1204** | **+1.50 pp, +14.2 % relative** |
 | AP75 | 0.0661 | 0.0974 | +47.4 % relative |
@@ -353,7 +353,35 @@ already queued and their results will be visible in this repo:
 
 ## Data
 
-Not included. The imagery is a third-party public release; the filenames embed
-patient identifiers, so neither the images nor the generated split lists are
-committed here. `make_clean_split.py` is deterministic — the exact split
-regenerates from the source data at a given seed.
+**Images are not included.** The imagery is a third-party public release whose
+original filenames embed patient names and examination dates, so no image is
+committed here and none ever should be.
+
+**Annotations are included, anonymised.** `data_coco/annotations/` carries the
+full COCO instance annotations for all three splits: 13,932 images, 136,883
+annotations, 31 categories, polygons intact. Every `file_name` is reduced to the
+Roboflow content hash the source release already assigns, `rf.<hash>.jpg`, which
+is unique per image and carries no identifying information. `make_clean_split.py`
+is deterministic, so the corrected patient-grouped split regenerates exactly.
+
+To reconstruct the corpus, download the source release and match by that hash:
+each downloaded file name ends in `.rf.<hash>.<ext>`, and the annotation
+`file_name` is `rf.<hash>.<ext>`. `tools/anonymize_annotations.py` performs the
+same reduction and refuses to write anything that does not come out as
+`rf.<hash>.<ext>`.
+
+## Licence
+
+Code and annotations are released under the Apache License 2.0, see `LICENSE`.
+The written analyses under `paper/` are released under CC BY 4.0. Both require
+attribution; Apache 2.0 additionally requires that changes be stated and notices
+preserved.
+
+The source imagery is a third-party release under its own licence and is not
+redistributed here.
+
+## Citation
+
+Machine-readable metadata is in `CITATION.cff`; GitHub renders a cite button
+from it. If you use the code, the corrected split, the anonymised annotations,
+or the contamination and resolution findings, please cite this repository.

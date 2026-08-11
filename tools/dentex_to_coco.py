@@ -16,8 +16,8 @@ stories: the task is intrinsically hard, or our labels are unreliable. DENTEX
 is professionally annotated for a MICCAI challenge, so scoring our own model on
 it separates the two. Comparable performance means the difficulty is real;
 markedly better on DENTEX means the problem is our labels. It also satisfies the
-client's standing requirement that no long-tail claim be made without an
-external benchmark.
+standing requirement that no long-tail claim be made without an external
+benchmark.
 
 The impacted-tooth class is the control. It scores well on our corpus, so if the
 domain gap alone were responsible for a collapse on DENTEX we would expect to

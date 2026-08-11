@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
-# Two things the client named that no run has ever produced.
+# Two things the evaluation protocol requires that no run has ever produced.
 #
 # 1. THE PUBLISHED COMPARATORS. "Comparisons with the strongest relevant
 #    existing boundary-aware or class-imbalance methods, not only the models'
-#    default settings" (client, 04 Aug). Four were implemented on 04 Aug and
+#    default settings". Four were implemented on 04 Aug and
 #    none produced a number, because ultralytics 8.4.108's `crop_mask` zeroes
 #    outside the box with two IN-PLACE multiplies and returns the same tensor.
 #    Cropping `pred_mask.sigmoid()` therefore destroys a value autograd needs
@@ -14,7 +14,7 @@
 #
 #    Two arms, not four: soft Dice is the canonical region-based comparator and
 #    Kervadec is the canonical boundary-aware one, so between them they cover
-#    both families the client named. Tversky and Focal Tversky are the same
+#    both families the protocol requires. Tversky and Focal Tversky are the same
 #    family as Dice with a tuned asymmetry and add little for another six GPU
 #    hours we do not have before Wednesday.
 #

@@ -131,8 +131,6 @@ score() {      # tag imgsz
 
 echo "[$(stamp)] best-of arm queued behind the entire chain"
 wait_on run_final.sh run_extras.sh run_protohp.sh run_labelnoise.sh run_selftrain.sh
-run_k2seeds.sh run_labelnoise.sh run_selftrain.sh run_toothstage.sh \
-        run_protohp.sh
 
 # ------------------------------------------------------------ base config ---
 # The strongest confirmed single model becomes the starting point. Resolution,

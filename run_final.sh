@@ -4,8 +4,8 @@
 # WHY THIS EXISTS. The chain was built when the open question was "does anything
 # work". That question is answered: training at native resolution beats the
 # baseline at two seeds, +23.2 % and +18.7 % relative on validation. What is left
-# is not discovery, it is the three things the contract and the client's own
-# 04 Aug methodology message require, none of which were scheduled:
+# is not discovery, it is the three things the evaluation protocol and the
+# methodology standard require, none of which were scheduled:
 #
 #   1. A TEST-split number for the method. Everything we have quoted is
 #      validation, measured against abl_S0. On test abl_S0 scores 0.1007 while
@@ -34,7 +34,7 @@
 # selection. Only the arms that go in the final table are scored here: the two
 # confirmed seeds of the method. Every other arm stays on validation. Scoring
 # candidates on test to pick between them would convert the frozen split into a
-# selection set, which is exactly what the client's message forbids.
+# selection set, which is exactly what the protocol forbids.
 #
 # Usage:  nohup ./run_final.sh > logs/final.log 2>&1 &
 

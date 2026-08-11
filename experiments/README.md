@@ -1,7 +1,7 @@
 # Experiment drivers
 
 Every arm reported in `RESULTS.md` and in the papers was produced by one of the
-scripts here. They are kept because the contract asks for reproducible code, and
+scripts here. They are kept because reproducible code is a requirement of this work, and
 because a result whose exact command is lost is not reproducible. They are not
 meant to be re-run casually: several take a day of GPU time, and each one guards
 against re-running work whose checkpoint says it already finished.

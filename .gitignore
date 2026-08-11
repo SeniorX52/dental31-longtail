@@ -43,8 +43,8 @@ reports/
 *.engine
 
 # ---------------------------------------------------------------------------
-# Internal: milestone tracking, client-facing protocol drafts, machine-specific
-# launchers. Kept out of the deliverable repo.
+# Internal: working notes, protocol drafts, machine-specific
+# launchers. Kept out of the published repo.
 # ---------------------------------------------------------------------------
 _internal/
 
@@ -70,7 +70,7 @@ venv/
 .idea/
 .DS_Store
 
-# Plain-language internal overview -- not part of the deliverable repo
+# Plain-language internal overview -- not part of the published repo
 PROJECT_OVERVIEW.md
 
 # Runtime pause switch for watchdog.sh -- machine state, not source

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Package trained checkpoints into a deliverable the client can actually open.
+"""Package trained checkpoints into an archive that opens without this repo.
 
 WHY RE-EXPORT RATHER THAN COPY. Our segmentation runs were trained through
 `train_seg.py`, whose model class `LongTailSegModel` is defined in a script that
@@ -181,7 +181,7 @@ def verify_portable(path: str) -> str:
     """Load the file in a CLEAN interpreter with this repo removed from the path.
 
     Anything less is not a test: importing the repo in-process is exactly the
-    condition the client will not have.
+    condition a downstream user will not have.
     """
     code = (
         "import sys;"

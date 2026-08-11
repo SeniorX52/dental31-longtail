@@ -2,7 +2,7 @@
 # Native-resolution probe: does the resolution lever keep paying, or has it saturated?
 #
 # WHY. The 1280 probe is the first thing in this project that worked and whose
-# mechanism survives scrutiny. Against the client's recipe reproduced on the
+# mechanism survives scrutiny. Against the reference recipe reproduced on the
 # clean split it gives +1.50 pp segm mAP (+14.2 % relative), and critically the
 # gain is NOT detection-side: box mAP moved +0.17 pp against a +-0.75 pp noise
 # floor, so the improvement has nowhere to come from except the masks. The

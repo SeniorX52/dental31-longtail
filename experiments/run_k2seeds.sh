@@ -2,7 +2,7 @@
 # Two seed replicates of the one arm that beat the reproduced baseline.
 #
 # WHY THIS IS THE DECISIVE RUN. abl_K2_cv4wide reaches 0.1118 segm mAP against
-# the 0.1055 of abl_S0, the client's recipe reproduced on the clean split at the
+# the 0.1055 of abl_S0, the reference recipe reproduced on the clean split at the
 # same 50-epoch budget with one variable changed. That is +0.64 pp, or +6.0 %
 # relative, and the noise floor is +-0.21 pp at two standard deviations. Three
 # times the floor looks decisive until you notice what the floor measures: it

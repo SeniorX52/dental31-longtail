@@ -1,0 +1,27 @@
+cff-version: 1.2.0
+message: "If you use this software, the annotations, or the findings below, please cite it."
+title: "Long-tailed dental radiograph detection and instance segmentation"
+abstract: >-
+  Detection and instance segmentation on a 31-class panoramic dental radiograph
+  corpus with extreme class imbalance. Contains a data-integrity toolchain that
+  identifies and corrects a 95.9% train/test contamination in the source
+  release, long-tail, boundary-aware and input-resolution modifications to both
+  architectures, frozen ablation matrices attributing each change to a single
+  component, and a shared evaluation stack covering COCO metrics, contour
+  metrics, a clinical endpoint and bootstrap confidence intervals.
+authors:
+  - family-names: Abdelaziz
+    given-names: Mostafa
+    email: smart.darsh14@gmail.com
+type: software
+license: Apache-2.0
+repository-code: "https://github.com/SeniorX52/dental31-longtail"
+date-released: 2026-08-11
+keywords:
+  - medical imaging
+  - dental radiography
+  - instance segmentation
+  - object detection
+  - long-tailed recognition
+  - evaluation integrity
+  - dataset contamination
